@@ -63,6 +63,21 @@ memory-label = "LABEL_HERE"
 Если пользователь ответил "да" на автозапуск, включи его автоматически.
 Если пользователь ответил "да" на MCP для Codex или Claude Desktop, измени эти конфиги автоматически.
 
+### Локальная настройка на macOS
+
+Для macOS используй скрипты репозитория:
+- `scripts/macos/install-local-stack.sh`
+- `scripts/macos/install-codex-mcp.sh`
+- `scripts/macos/install-claude-mcp.sh`
+- `scripts/macos/install-autostart.sh`
+- `scripts/macos/uninstall-autostart.sh`
+- `scripts/macos/start-local-stack.sh`
+- `scripts/macos/stop-local-stack.sh`
+
+Автозапуск на macOS реализован через LaunchAgent (`~/Library/LaunchAgents/com.ragconnect.local-stack.plist`).
+Claude Desktop config на macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`.
+Все скрипты принимают `--repo-root /path/to/RAGConnect`. Запускай их напрямую, не требуя от пользователя консоли.
+
 ### Деплой сервера
 
 Если пользователь просит серверный деплой, агент обязан:
