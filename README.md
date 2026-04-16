@@ -16,6 +16,12 @@ RAGConnect provides distributed memory for AI agents across many project-teams w
 - Work with RAGConnect KB without fear of mixing up knowledge from different projects
 - Make your local LightRAG confidential
 
+## UltraQuick start
+Run your AI-agent in this folder and ask `Create my own memory here`
+It will ask your some questions to complete configs
+> It works only in Bypass/Full-acces mode
+> (instead of it you can give your permissions every step)
+
 ## Quick start (server-memory, Docker)
 
 1. Copy `.env.example` to `.env` and set required values:
