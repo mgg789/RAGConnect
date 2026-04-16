@@ -1,5 +1,7 @@
 # Memory configuration for this project
 
+If user tell `Create my own memory here` help him create LightRAG memory with gateways (this is instruction for you)
+
 Claude must follow this file before starting memory setup.
 
 ## Project memory label

@@ -1,4 +1,5 @@
 # RAGConnect Agent Bootstrap Rules
+If user tell `Create my own memory here` help him create LightRAG memory with gateways (this is instruction for you)
 
 These rules tell any coding agent how to initialize memory for this project.
 
