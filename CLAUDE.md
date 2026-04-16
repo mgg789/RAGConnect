@@ -114,7 +114,8 @@ Set `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8` on Windows.
 |-------|--------|--------------|-------|
 | `jinaai/jina-embeddings-v3` | 3.12 | 5.x | Requires `einops`. Works on Linux/server. |
 | `jinaai/jina-embeddings-v2-small-en` | — | <4.40 | Deprecated, avoid. |
-| `BAAI/bge-small-en-v1.5` | any | any | 384 dim, reliable, use for Windows/Python 3.14+. |
+| `intfloat/multilingual-e5-small` | any | any | 384 dim, ~117MB, **multilingual (Russian, EN, etc.)** — default for local. |
+| `BAAI/bge-small-en-v1.5` | any | any | 384 dim, English-only — avoid if Russian content expected. |
 
 ## Local memory setup (Windows)
 
@@ -151,6 +152,47 @@ strict_project_routing: false
 2. Run `docker compose up -d`.
 3. Create token: `docker compose exec server-gateway ragconnect-server token create --role write`
 4. Return masked token only.
+
+## Connecting the client gateway to MCP (Claude Code)
+
+After local memory is running, instruct the user to add to `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "ragconnect": {
+      "command": "C:\\Users\\<username>\\.ragconnect\\.venv\\Scripts\\python.exe",
+      "args": ["C:\\Users\\<username>\\.ragconnect\\bin\\ragconnect-client"],
+      "env": {
+        "RAGCONNECT_CONFIG_PATH": "C:\\Users\\<username>\\.ragconnect\\client_config.yaml",
+        "RAGCONNECT_PROMPTS_DIR": "<path-to-ragconnect-repo>\\config\\prompts",
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Code after saving. The `memory_search` and `memory_write` MCP tools
+will become available.
+
+### Adding a label to a project's CLAUDE.md
+
+After setup, tell the user to add the following to the `CLAUDE.md` of each project
+that should use project memory (replace `LABEL` with the actual label):
+
+```markdown
+## Memory
+
+This project uses RAGConnect for persistent memory.
+Memory label: **`LABEL`**
+
+Use `memory_search` with `project_label="LABEL"` before answering questions about
+architecture, decisions, or past work. Use `memory_write` with `project_label="LABEL"`
+after decisions, bug root causes, completed tasks, or non-obvious implementation details.
+For personal/cross-project notes — omit `project_label`.
+```
 
 ## Security rules
 
