@@ -471,7 +471,8 @@ _GRAPH_HTML = r"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>RAGConnect — Memory Graph</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"
+  onerror="this.onerror=null;this.src='https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js'"></script>
 <style>
   :root{--bg:#0f1117;--surface:#1a1d27;--border:#2a2d3a;--accent:#3b6ff5;--text:#e8eaf0;--muted:#6b7280;--node1:#3b6ff5;--node2:#7c3aed;--node3:#059669;--node4:#d97706;}
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -494,7 +495,7 @@ _GRAPH_HTML = r"""<!DOCTYPE html>
   #detail .prop .k{color:var(--muted);flex-shrink:0}
   #detail .prop .v{word-break:break-word}
   #detail .close{position:absolute;top:.6rem;right:.75rem;background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem}
-  #overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,17,23,.85);font-size:.9rem;color:var(--muted)}
+  #overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,17,23,.85);font-size:.9rem;color:#e8eaf0;z-index:10}
 </style>
 </head>
 <body>
@@ -561,6 +562,10 @@ function colorByType(type) {
 
 function loadGraph() {
   showOverlay('Loading…');
+  if (typeof vis === 'undefined') {
+    showOverlay('❌ vis-network failed to load. Check your internet connection and reload.');
+    return;
+  }
   try {
     const raw = __GRAPH_DATA__;
     const { nodes, edges } = extractGraph(raw);
@@ -594,7 +599,8 @@ function loadGraph() {
       `${allNodes.length} nodes · ${allEdges.length} edges`;
     hideOverlay();
   } catch(e) {
-    showOverlay('Error: ' + e.message);
+    showOverlay('❌ Error: ' + e.message);
+    console.error('[RAGConnect graph]', e);
   }
 }
 
@@ -647,7 +653,8 @@ document.getElementById('search').addEventListener('input', e => {
   renderGraph(filtered, filteredEdges);
 });
 
-loadGraph();
+// Wait for vis-network to fully load before initializing the graph
+window.addEventListener('load', loadGraph);
 </script>
 </body>
 </html>"""
