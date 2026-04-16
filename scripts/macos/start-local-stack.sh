@@ -104,7 +104,20 @@ else
   fi
 fi
 
+# ── ragconnect-web (destination config UI on port 8090) ──────────────────────
+WEB_EXE="$RAG_HOME/.venv/bin/ragconnect-web"
+if [[ -x "$WEB_EXE" ]]; then
+  if port_in_use 8090; then
+    echo "[RAGConnect] ragconnect-web already running on port 8090"
+  else
+    echo "[RAGConnect] Starting ragconnect-web on port 8090 ..."
+    nohup "$WEB_EXE" \
+      >"$RAG_HOME/web.stdout.log" 2>"$RAG_HOME/web.stderr.log" &
+  fi
+fi
+
 echo ""
 echo "[RAGConnect] Local stack is running."
-echo "  LightRAG : http://127.0.0.1:9621"
-[[ "${LOCAL_EMBEDDING_MODE:-}" == "true" ]] && echo "  Proxy    : http://127.0.0.1:$PROXY_PORT"
+echo "  LightRAG         : http://127.0.0.1:9621"
+echo "  Destination UI   : http://127.0.0.1:8090"
+[[ "${LOCAL_EMBEDDING_MODE:-}" == "true" ]] && echo "  Embedding proxy  : http://127.0.0.1:$PROXY_PORT"

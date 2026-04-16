@@ -57,10 +57,25 @@ for ($i = 0; $i -lt 45; $i++) {
         $resp = Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:9621/health' -TimeoutSec 3
         if ($resp.StatusCode -eq 200) {
             Write-Host 'LightRAG local stack is running.'
-            exit 0
+            break
         }
     } catch {}
     Start-Sleep -Seconds 2
+} else {
+    throw "LightRAG did not become healthy. Check $RagHome\\lightrag.stderr.log"
 }
 
-throw "LightRAG did not become healthy. Check $RagHome\\lightrag.stderr.log"
+# ── ragconnect-web (destination config UI on port 8090) ───────────────────────
+$WebExe = Join-Path $RagHome '.venv\Scripts\ragconnect-web.exe'
+if (-not (Test-Path $WebExe)) { $WebExe = Join-Path $RagHome '.venv\Scripts\ragconnect-web' }
+
+if (-not (Test-Port 8090)) {
+    Start-Process -FilePath $WebExe `
+        -WorkingDirectory $RagHome `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput (Join-Path $RagHome 'web.stdout.log') `
+        -RedirectStandardError  (Join-Path $RagHome 'web.stderr.log') | Out-Null
+    Write-Host 'ragconnect-web started on http://127.0.0.1:8090'
+} else {
+    Write-Host 'ragconnect-web already running on port 8090'
+}

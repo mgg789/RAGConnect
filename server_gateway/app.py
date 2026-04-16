@@ -12,6 +12,7 @@ Start via CLI:
 
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import time
@@ -21,7 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
@@ -43,6 +44,22 @@ _admin_basic = HTTPBasic()
 
 _token_store = TokenStore(TOKEN_STORE_PATH)
 _lightrag = LightRAGClient(LIGHTRAG_URL)
+
+# Short-lived page nonces for admin JS calls (avoids Basic-auth-in-fetch issues)
+_admin_nonces: dict[str, float] = {}
+_NONCE_TTL = 1800  # 30 min
+
+
+def _new_nonce() -> str:
+    _admin_nonces.update({k: v for k, v in _admin_nonces.items() if v > time.time()})  # GC
+    nonce = secrets.token_urlsafe(32)
+    _admin_nonces[nonce] = time.time() + _NONCE_TTL
+    return nonce
+
+
+def _check_nonce(nonce: str) -> bool:
+    exp = _admin_nonces.get(nonce, 0)
+    return exp > time.time()
 ADMIN_USERNAME = os.environ.get("RAGCONNECT_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("RAGCONNECT_ADMIN_PASSWORD", "")
 RATE_LIMIT_REQUESTS = int(os.environ.get("RAGCONNECT_RATE_LIMIT_REQUESTS", "120"))
@@ -345,17 +362,34 @@ def _write_token_store(data: dict) -> None:
         yaml.dump(data, fh, default_flow_style=False, allow_unicode=True)
 
 
+def _require_admin_or_nonce(request: Request, nonce: Optional[str] = Query(None)) -> None:
+    """Allow access via page nonce (JS calls) OR standard Basic auth."""
+    if nonce and _check_nonce(nonce):
+        return
+    # No valid nonce → fall back to Basic auth challenge
+    raise HTTPException(status_code=401, headers={"WWW-Authenticate": 'Basic realm="RAGConnect Admin"'},
+                        detail="Admin authentication required.")
+
+
 @app.get("/admin/tokens")
-async def admin_tokens_list(_: None = Depends(_require_admin)) -> JSONResponse:
+async def admin_tokens_list(
+    request: Request,
+    nonce: Optional[str] = Query(None),
+    credentials: Optional[HTTPBasicCredentials] = Depends(HTTPBasic(auto_error=False)),
+) -> JSONResponse:
+    if not (nonce and _check_nonce(nonce)):
+        if not credentials:
+            raise HTTPException(status_code=401, headers={"WWW-Authenticate": 'Basic realm="RAGConnect Admin"'})
+        await _require_admin(request, credentials)
     data = _read_token_store()
     safe = []
     for t in data.get("tokens", []):
         safe.append({
-            "token_id":   t.get("token_id", ""),
-            "role":       t.get("role", ""),
-            "enabled":    t.get("enabled", True),
+            "token_id":    t.get("token_id", ""),
+            "role":        t.get("role", ""),
+            "enabled":     t.get("enabled", True),
             "description": t.get("description", ""),
-            "expires_at": t.get("expires_at", ""),
+            "expires_at":  t.get("expires_at", ""),
         })
     return JSONResponse(content={"status": "ok", "tokens": safe})
 
@@ -363,8 +397,14 @@ async def admin_tokens_list(_: None = Depends(_require_admin)) -> JSONResponse:
 @app.post("/admin/tokens")
 async def admin_tokens_create(
     req: TokenCreateRequest,
-    _: None = Depends(_require_admin),
+    request: Request,
+    nonce: Optional[str] = Query(None),
+    credentials: Optional[HTTPBasicCredentials] = Depends(HTTPBasic(auto_error=False)),
 ) -> JSONResponse:
+    if not (nonce and _check_nonce(nonce)):
+        if not credentials:
+            raise HTTPException(status_code=401, headers={"WWW-Authenticate": 'Basic realm="RAGConnect Admin"'})
+        await _require_admin(request, credentials)
     if req.role not in ("readonly", "write"):
         return _err("invalid_role", "Role must be 'readonly' or 'write'.", 400)
 
@@ -401,8 +441,14 @@ async def admin_tokens_create(
 @app.delete("/admin/tokens/{token_id}")
 async def admin_tokens_revoke(
     token_id: str,
-    _: None = Depends(_require_admin),
+    request: Request,
+    nonce: Optional[str] = Query(None),
+    credentials: Optional[HTTPBasicCredentials] = Depends(HTTPBasic(auto_error=False)),
 ) -> JSONResponse:
+    if not (nonce and _check_nonce(nonce)):
+        if not credentials:
+            raise HTTPException(status_code=401, headers={"WWW-Authenticate": 'Basic realm="RAGConnect Admin"'})
+        await _require_admin(request, credentials)
     data = _read_token_store()
     matched = False
     for t in data.get("tokens", []):
@@ -513,21 +559,20 @@ function colorByType(type) {
   return colors[h % colors.length];
 }
 
-async function loadGraph() {
-  showOverlay('Loading graph…');
+function loadGraph() {
+  showOverlay('Loading…');
   try {
-    const r = await fetch('/admin/graph', { credentials: 'include' });
-    if (!r.ok) { showOverlay('Failed to load: ' + r.status); return; }
-    const raw = await r.json();
+    const raw = __GRAPH_DATA__;
     const { nodes, edges } = extractGraph(raw);
 
-    if (!nodes.length) { showOverlay('Graph is empty — no entities in memory yet.'); return; }
+    if (!nodes.length) { showOverlay('Graph is empty — write something to memory first.'); return; }
 
     allNodes = nodes.map((n, i) => ({
       id:    n.id ?? n.name ?? i,
-      label: n.name || n.label || n.id || String(i),
+      label: (n.name || n.label || n.id || String(i)).slice(0, 40),
       title: buildTooltip(n),
-      color: { background: colorByType(n.type || n.entity_type), border: 'transparent',
+      color: { background: colorByType(n.type || n.entity_type || (n.labels||[])[0]),
+               border: 'transparent',
                highlight: { background: '#fff', border: '#3b6ff5' } },
       font:  { color: '#e8eaf0', size: 13 },
       _raw:  n,
@@ -537,7 +582,7 @@ async function loadGraph() {
       id:     i,
       from:   e.source ?? e.from ?? e.src,
       to:     e.target ?? e.to ?? e.dst,
-      label:  e.relation || e.label || e.type || '',
+      label:  (e.relation || e.label || e.type || '').slice(0, 30),
       color:  { color: '#3a3d50', highlight: '#3b6ff5' },
       font:   { color: '#6b7280', size: 11, align: 'middle' },
       arrows: { to: { enabled: true, scaleFactor: .6 } },
@@ -767,44 +812,43 @@ function fmtExpires(iso) {
   return new Date(iso).toLocaleDateString(undefined, {year:'numeric',month:'short',day:'numeric'});
 }
 
-async function loadTokens() {
-  try {
-    const r = await fetch('/admin/tokens', { credentials: 'include' });
-    if (!r.ok) { flash('Failed to load tokens: ' + r.status, 'err'); return; }
-    const d = await r.json();
-    const tokens = d.tokens || [];
-    $('tok-count').textContent = tokens.length ? `${tokens.length} total` : '';
-    const tbody = $('tok-tbody');
-    if (!tokens.length) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No tokens yet.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = tokens.map(t => {
-      const roleBadge = t.role === 'write'
-        ? '<span class="badge badge-write">write</span>'
-        : '<span class="badge badge-readonly">readonly</span>';
-      const revBtn = t.enabled
-        ? `<button class="btn btn-sm btn-danger-ghost" onclick="revoke('${t.token_id}')">Revoke</button>`
-        : '<span style="color:var(--muted);font-size:.8125rem">revoked</span>';
-      return `<tr>
-        <td><code>${t.token_id || '—'}</code></td>
-        <td>${roleBadge}</td>
-        <td>${statusBadge(t.enabled, t.expires_at)}</td>
-        <td style="font-size:.8125rem;color:var(--muted)">${fmtExpires(t.expires_at)}</td>
-        <td style="font-size:.8125rem;color:var(--muted)">${t.description || '—'}</td>
-        <td>${revBtn}</td>
-      </tr>`;
-    }).join('');
-  } catch(e) { flash('Error: ' + e.message, 'err'); }
+const NONCE = '__NONCE__';
+
+// Tokens are server-side rendered; JS only handles mutations + re-render
+let _tokens = __TOKENS_JSON__;
+
+function loadTokens() {
+  const tokens = _tokens;
+  $('tok-count').textContent = tokens.length ? `${tokens.length} total` : '';
+  const tbody = $('tok-tbody');
+  if (!tokens.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No tokens yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = tokens.map(t => {
+    const roleBadge = t.role === 'write'
+      ? '<span class="badge badge-write">write</span>'
+      : '<span class="badge badge-readonly">readonly</span>';
+    const revBtn = t.enabled
+      ? `<button class="btn btn-sm btn-danger-ghost" onclick="revoke('${t.token_id}')">Revoke</button>`
+      : '<span style="color:var(--muted);font-size:.8125rem">revoked</span>';
+    return `<tr>
+      <td><code>${t.token_id || '—'}</code></td>
+      <td>${roleBadge}</td>
+      <td>${statusBadge(t.enabled, t.expires_at)}</td>
+      <td style="font-size:.8125rem;color:var(--muted)">${fmtExpires(t.expires_at)}</td>
+      <td style="font-size:.8125rem;color:var(--muted)">${t.description || '—'}</td>
+      <td>${revBtn}</td>
+    </tr>`;
+  }).join('');
 }
 
 $('create-form').addEventListener('submit', async e => {
   e.preventDefault();
   const fd = new FormData(e.target);
-  const r = await fetch('/admin/tokens', {
+  const r = await fetch(`/admin/tokens?nonce=${NONCE}`, {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    credentials: 'include',
     body: JSON.stringify({
       role: fd.get('role'),
       description: fd.get('description'),
@@ -815,6 +859,10 @@ $('create-form').addEventListener('submit', async e => {
   if (d.status === 'ok') {
     e.target.reset();
     e.target.querySelector('[name=expires_days]').value = '90';
+    _tokens = [..._tokens, {
+      token_id: d.token_id, role: d.role, enabled: true,
+      description: fd.get('description'), expires_at: d.expires_at,
+    }];
     loadTokens();
     showModal(d.token, d.role, d.expires_at);
   } else {
@@ -824,12 +872,15 @@ $('create-form').addEventListener('submit', async e => {
 
 async function revoke(tokenId) {
   if (!confirm('Revoke this token? This cannot be undone.')) return;
-  const r = await fetch(`/admin/tokens/${encodeURIComponent(tokenId)}`, {
-    method: 'DELETE', credentials: 'include',
+  const r = await fetch(`/admin/tokens/${encodeURIComponent(tokenId)}?nonce=${NONCE}`, {
+    method: 'DELETE',
   });
   const d = await r.json();
-  if (d.status === 'ok') { loadTokens(); flash('Token revoked.', 'ok'); }
-  else flash(d.error?.message || 'Failed to revoke.', 'err');
+  if (d.status === 'ok') {
+    _tokens = _tokens.map(t => t.token_id === tokenId ? {...t, enabled: false} : t);
+    loadTokens();
+    flash('Token revoked.', 'ok');
+  } else flash(d.error?.message || 'Failed to revoke.', 'err');
 }
 
 function showModal(token, role, expires) {
@@ -852,9 +903,17 @@ loadTokens();
 
 @app.get("/ui/graph", response_class=HTMLResponse)
 async def ui_graph(_: None = Depends(_require_admin)) -> str:
-    return _GRAPH_HTML
+    try:
+        graph_data = await _lightrag.graph()
+    except Exception:
+        graph_data = {"nodes": [], "edges": []}
+    # Embed graph data server-side — no JS fetch needed (avoids Basic auth in fetch)
+    return _GRAPH_HTML.replace("__GRAPH_DATA__", json.dumps(graph_data))
 
 
 @app.get("/ui/configs", response_class=HTMLResponse)
 async def ui_configs(_: None = Depends(_require_admin)) -> str:
-    return _CONFIGS_HTML
+    data = _read_token_store()
+    tokens_json = json.dumps(data.get("tokens", []))
+    nonce = _new_nonce()
+    return _CONFIGS_HTML.replace("__TOKENS_JSON__", tokens_json).replace("__NONCE__", nonce)
