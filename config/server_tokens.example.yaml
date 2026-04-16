@@ -1,0 +1,30 @@
+# RAGConnect — Server Gateway token store example
+#
+# Copy this file to the path specified by TOKEN_STORE_PATH (default: server_tokens.yaml).
+# Manage tokens with the CLI:
+#
+#   ragconnect-server token create --role write  --description "Alice"
+#   ragconnect-server token create --role readonly --description "CI pipeline"
+#   ragconnect-server token list
+#   ragconnect-server token revoke tok_abc123
+#
+# Roles:
+#   readonly  — search / read access only
+#   write     — search + write / insert access
+
+tokens:
+  - token: tok_replace_me_readonly_abc123def456789
+    role: readonly
+    enabled: true
+    description: "User Alice — readonly access"
+
+  - token: tok_replace_me_write_xyz789ghi012345678
+    role: write
+    enabled: true
+    description: "User Bob — write access"
+
+  # Disabled token example (will be rejected by the server):
+  # - token: tok_revoked_example
+  #   role: write
+  #   enabled: false
+  #   description: "Former member — revoked"

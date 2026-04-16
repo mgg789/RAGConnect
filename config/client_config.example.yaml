@@ -1,0 +1,31 @@
+# RAGConnect — Client Gateway configuration example
+#
+# Copy this file to ~/.ragconnect/client_config.yaml and fill in real values.
+# Override the path with the RAGCONNECT_CONFIG_PATH environment variable.
+#
+# Each project entry requires:
+#   label  — unique short name used as the project_label in MCP tool calls
+#   url    — base URL of the project's Server Gateway
+#   token  — your personal access token for that project (issued by the project admin)
+
+projects:
+  - label: kettle
+    url: https://kettle-memory.example.com
+    token: tok_kettle_user_01_replace_me
+    enabled: true
+
+  - label: edu
+    url: https://edu-memory.example.com
+    token: tok_edu_user_01_replace_me
+    enabled: true
+
+  # Disable a project without removing it:
+  # - label: archived
+  #   url: https://archived-memory.example.com
+  #   token: tok_archived_replace_me
+  #   enabled: false
+
+local_memory:
+  # URL of your local LightRAG instance
+  url: http://127.0.0.1:9621
+  enabled: true
