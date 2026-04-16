@@ -19,10 +19,20 @@ class LightRAGClient:
         return self._normalize(response, ResultSource.local)
 
     async def write(self, text: str) -> None:
-        await self._post("/insert", {"text": text})
+        await self._post_compatible(
+            [
+                ("/documents/text", {"text": text}),
+                ("/insert", {"text": text}),
+            ]
+        )
 
     async def ingest(self, texts: list[str]) -> dict:
-        return await self._post("/insert", {"texts": texts})
+        return await self._post_compatible(
+            [
+                ("/documents/texts", {"texts": texts}),
+                ("/insert", {"texts": texts}),
+            ]
+        )
 
     async def documents(self) -> dict:
         return await self._get("/documents")
@@ -62,6 +72,23 @@ class LightRAGClient:
                 return {"status": "ok"}
             data = response.json()
             return data if isinstance(data, dict) else {"data": data}
+
+    async def _post_compatible(self, attempts: list[tuple[str, dict]]) -> dict:
+        last_exc: httpx.HTTPStatusError | None = None
+        for index, (path, payload) in enumerate(attempts):
+            try:
+                return await self._post(path, payload)
+            except httpx.HTTPStatusError as exc:
+                last_exc = exc
+                is_not_found = exc.response is not None and exc.response.status_code == 404
+                has_fallback = index < len(attempts) - 1
+                if is_not_found and has_fallback:
+                    continue
+                raise
+
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("No LightRAG write endpoints configured.")
 
     # ------------------------------------------------------------------
     # Internal helpers
