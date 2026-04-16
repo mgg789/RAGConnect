@@ -120,6 +120,25 @@ async def update_local(local: LocalIn):
     return {"status": "ok"}
 
 
+class DefaultProjectIn(BaseModel):
+    label: Optional[str] = None  # None means "route to local"
+
+
+@app.put("/api/default-project")
+async def set_default_project(body: DefaultProjectIn):
+    data = _read()
+    if body.label:
+        # Verify the label actually exists
+        projects = data.get("projects", [])
+        if not any(p["label"] == body.label for p in projects):
+            return {"status": "error", "error": f"Label '{body.label}' not found."}
+        data["default_project"] = body.label
+    else:
+        data.pop("default_project", None)
+    _write(data)
+    return {"status": "ok"}
+
+
 # ---------------------------------------------------------------------------
 # Web UI — single-page HTML (no external dependencies)
 # ---------------------------------------------------------------------------
@@ -296,6 +315,30 @@ _HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- -------- Default project -------- -->
+  <div class="card">
+    <div class="card-head">
+      <span>Default Project</span>
+      <span style="font-size:.8125rem;font-weight:400;color:var(--muted)">used when no project_label is specified</span>
+    </div>
+    <div class="card-body">
+      <p style="font-size:.875rem;color:var(--muted);margin-bottom:1rem">
+        The AI uses this project for memory operations when it does not pass an explicit
+        <code>project_label</code>. Set it to the project you are currently working in.
+        Leave as <em>None</em> to fall back to local memory by default.
+      </p>
+      <div class="form-row" style="align-items:center">
+        <div class="fg" style="max-width:260px">
+          <label>Default destination</label>
+          <select id="default-project-select">
+            <option value="">— None (use local memory) —</option>
+          </select>
+        </div>
+        <button type="button" class="btn btn-primary" onclick="saveDefaultProject()">Save</button>
+      </div>
+    </div>
+  </div>
+
   <!-- -------- Local memory -------- -->
   <div class="card">
     <div class="card-head">Local Memory (fallback)</div>
@@ -375,9 +418,28 @@ async function load() {
     renderProjects(cfg.projects || []);
     $('local-url').value = cfg.local_memory?.url || 'http://127.0.0.1:9621';
     $('local-enabled').value = String(cfg.local_memory?.enabled !== false);
+    // Populate default project dropdown
+    const sel = $('default-project-select');
+    const cur = cfg.default_project || '';
+    sel.innerHTML = '<option value="">— None (use local memory) —</option>' +
+      (cfg.projects || []).filter(p => p.enabled).map(p =>
+        `<option value="${esc(p.label)}"${p.label === cur ? ' selected' : ''}>${esc(p.label)}</option>`
+      ).join('');
   } catch(e) {
     flash('Could not load config: ' + e.message, 'err');
   }
+}
+
+// ---- default project ----
+async function saveDefaultProject() {
+  const label = $('default-project-select').value || null;
+  const r = await fetch('/api/default-project', {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ label })
+  });
+  const d = await r.json();
+  if (d.status === 'ok') flash(label ? `Default project set to "${label}".` : 'Default project cleared (local memory).', 'ok');
+  else flash(d.error || 'Failed to save.', 'err');
 }
 
 // ---- add ----

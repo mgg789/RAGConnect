@@ -23,14 +23,16 @@ class Router:
     Routing rules
     -------------
     search:
-      - no label          → local
-      - label found       → project server; fallback to local + warning on error
-      - label not found   → local + warning
+      - no label + no default_project  → local
+      - no label + default_project set → default project (with local fallback)
+      - label found                    → project server; fallback to local + warning on error
+      - label not found                → local + warning
 
     write:
-      - no label          → local
-      - label found       → project server; error on failure unless allow_local_fallback=True
-      - label not found   → error unless allow_local_fallback=True
+      - no label + no default_project  → local
+      - no label + default_project set → default project
+      - label found                    → project server; error on failure unless allow_local_fallback=True
+      - label not found                → error unless allow_local_fallback=True
     """
 
     def __init__(self, config: ClientConfig) -> None:
@@ -48,12 +50,15 @@ class Router:
         query: str,
         project_label: Optional[str] = None,
     ) -> SearchResponse:
-        # Scenario A – no label
-        if not project_label:
+        # Resolve effective label: explicit > default_project > local
+        effective_label = project_label or self.config.default_project
+
+        # Scenario A – no label and no default configured
+        if not effective_label:
             return await self._search_local(query)
 
         # Scenario B – label found in config
-        project = find_project(self.config, project_label)
+        project = find_project(self.config, effective_label)
         if project:
             return await self._search_project(query, project)
 
@@ -64,7 +69,7 @@ class Router:
             WarningInfo(
                 code=errors.WARNING_DESTINATION_NOT_FOUND,
                 message=(
-                    f"Project '{project_label}' not found in configuration. "
+                    f"Project '{effective_label}' not found in configuration. "
                     "Search was executed against local memory only."
                 ),
             ),
@@ -130,12 +135,15 @@ class Router:
         project_label: Optional[str] = None,
         allow_local_fallback: bool = False,
     ) -> WriteResponse:
-        # Scenario A – no label
-        if not project_label:
+        # Resolve effective label: explicit > default_project > local
+        effective_label = project_label or self.config.default_project
+
+        # Scenario A – no label and no default configured
+        if not effective_label:
             return await self._write_local(text)
 
         # Scenario B – label found in config
-        project = find_project(self.config, project_label)
+        project = find_project(self.config, effective_label)
         if project:
             return await self._write_project(text, project, allow_local_fallback)
 
@@ -147,7 +155,7 @@ class Router:
                 WarningInfo(
                     code=errors.WARNING_WRITE_FALLBACK_TO_LOCAL,
                     message=(
-                        f"Project '{project_label}' not found in configuration. "
+                        f"Project '{effective_label}' not found in configuration. "
                         "Writing to local memory (fallback enabled)."
                     ),
                 ),
@@ -156,7 +164,7 @@ class Router:
             status="error",
             error=ErrorInfo(
                 code=errors.ERROR_PROJECT_NOT_CONFIGURED,
-                message=f"Project '{project_label}' not found in configuration.",
+                message=f"Project '{effective_label}' not found in configuration.",
             ),
         )
 

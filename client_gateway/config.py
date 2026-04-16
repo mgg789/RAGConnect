@@ -23,6 +23,9 @@ class LocalMemoryConfig(BaseModel):
 class ClientConfig(BaseModel):
     projects: List[ProjectConfig] = []
     local_memory: LocalMemoryConfig = LocalMemoryConfig()
+    # When set, memory operations with no explicit project_label are routed here
+    # instead of local memory. The AI will see this in its MCP prompt context.
+    default_project: Optional[str] = None
 
 
 # Default config path: $RAGCONNECT_CONFIG_PATH or ~/.ragconnect/client_config.yaml
