@@ -1,51 +1,55 @@
 ﻿# RAGConnect
 
-RAGConnect даёт агенту одну личную память и любое количество изолированных проектных памятей.
-Основной сценарий использования здесь агентный: пользователь описывает задачу обычным языком, отвечает на короткий набор вопросов, а агент сам настраивает локальную память, MCP и при необходимости сервер.
+RAGConnect gives your AI agents one shared memory layer so you can work more efficiently. It works especially well for teams: you can create multiple project memory spaces, connect them to your local memory, keep personal and project memory separate, and still let your agents collaborate through shared project context.
 
-## Что получает пользователь
+## What you get
 
-- локальную память по умолчанию для личного долгосрочного контекста
-- проектную память по `project_label`
-- MCP для Codex и Claude Desktop
-- опциональный серверный деплой для общей памяти команды
-- опциональный автозапуск локальной памяти при входе в Windows
+- local memory by default for personal long-term context, available to all AI agents on the same machine
+- project memory selected by `project_label`, shared across everyone working on that project and separated from local memory
+- MCP support for Codex, Claude Desktop, and other MCP-compatible apps
+- optional server deployment for shared team memory
+- optional auto-start for local memory on Windows or macOS for a smoother workflow
 
-## Рекомендуемый сценарий старта
+> For now, we support only LightRAG because we consider it the strongest option today.  
+> For your convenience, we are already working on integrations with Karpathy-style memory approaches, AgentsMemory, and KnowledgeMD.
 
-Открой репозиторий в агенте и напиши:
+## UltraQuickStart
+
+Clone the repository and, inside the created directory, tell your AI agent:
 
 `Create my own memory here`
 
-Дальше агент должен сам:
-1. задать обязательные вопросы из `AGENTS.md` или `CLAUDE.md`
-2. поднять локальную память, если она нужна
-3. подключить MCP для Codex и или Claude Desktop, если это нужно
-4. включить автозапуск локальной памяти, если пользователь этого хочет
-5. задеплоить серверную память, если пользователь этого хочет
-6. проверить `health`, `write` и `search`
-7. подтвердить маршрутизацию: без label в локальную память, с label в проектную
+Then the agent will:
 
-Пользователь не должен вручную открывать терминал или писать команды, если агент может сделать это сам.
+1. ask you the required questions
+2. set up local memory if needed
+3. connect MCP for Codex and Claude Desktop if needed
+4. enable local memory auto-start if needed
+5. deploy server memory if needed
+6. test `health`, `write`, and `search`
+7. confirm routing: without a label -> local memory, with a label -> project memory
 
-## Скрипты для локальной установки
+This is the simplest and most convenient setup path. Recommended.
+
+## Scripts for local installation
 
 ### Windows
 
-- `scripts/windows/install-local-stack.ps1` — основной bootstrap
-- `scripts/windows/install-codex-mcp.ps1` — MCP для Codex
-- `scripts/windows/install-claude-mcp.ps1` — MCP для Claude Desktop
-- `scripts/windows/install-autostart.ps1` — автозапуск через папку Startup
+- `scripts/windows/install-local-stack.ps1` — main bootstrap
+- `scripts/windows/install-codex-mcp.ps1` — MCP for Codex
+- `scripts/windows/install-claude-mcp.ps1` — MCP for Claude Desktop
+- `scripts/windows/install-autostart.ps1` — auto-start via the Startup folder
 - `scripts/windows/uninstall-autostart.ps1`
 - `scripts/windows/start-local-stack.ps1`
 - `scripts/windows/stop-local-stack.ps1`
 
-Что делает `install-local-stack.ps1`:
-- создаёт `~/.ragconnect` и `.venv`
-- ставит проект, LightRAG API и embedding runtime
-- пишет `~/.ragconnect/.env` и `client_config.yaml`
-- по флагу ставит MCP для Codex или Claude Desktop
-- по флагу включает автозапуск
+What `install-local-stack.ps1` does:
+
+- creates `~/.ragconnect` and `.venv`
+- installs the project, LightRAG API, and embedding runtime
+- writes `~/.ragconnect/.env` and `client_config.yaml`
+- optionally installs MCP for Codex or Claude Desktop
+- optionally enables auto-start
 
 ```powershell
 powershell -File scripts/windows/install-local-stack.ps1 `
@@ -58,20 +62,21 @@ powershell -File scripts/windows/install-local-stack.ps1 `
 
 ### macOS
 
-- `scripts/macos/install-local-stack.sh` — основной bootstrap
-- `scripts/macos/install-codex-mcp.sh` — MCP для Codex
-- `scripts/macos/install-claude-mcp.sh` — MCP для Claude Desktop
-- `scripts/macos/install-autostart.sh` — автозапуск через LaunchAgent
+- `scripts/macos/install-local-stack.sh` — main bootstrap
+- `scripts/macos/install-codex-mcp.sh` — MCP for Codex
+- `scripts/macos/install-claude-mcp.sh` — MCP for Claude Desktop
+- `scripts/macos/install-autostart.sh` — auto-start via LaunchAgent
 - `scripts/macos/uninstall-autostart.sh`
 - `scripts/macos/start-local-stack.sh`
 - `scripts/macos/stop-local-stack.sh`
 
-Что делает `install-local-stack.sh`:
-- создаёт `~/.ragconnect` и `.venv`
-- ставит проект, LightRAG API и embedding runtime
-- пишет `~/.ragconnect/.env` (chmod 600) и `client_config.yaml`
-- по флагу ставит MCP для Codex или Claude Desktop
-- по флагу включает автозапуск через `~/Library/LaunchAgents/com.ragconnect.local-stack.plist`
+What `install-local-stack.sh` does:
+
+- creates `~/.ragconnect` and `.venv`
+- installs the project, LightRAG API, and embedding runtime
+- writes `~/.ragconnect/.env` (`chmod 600`) and `client_config.yaml`
+- optionally installs MCP for Codex or Claude Desktop
+- optionally enables auto-start via `~/Library/LaunchAgents/com.ragconnect.local-stack.plist`
 
 ```bash
 bash scripts/macos/install-local-stack.sh \
@@ -81,11 +86,11 @@ bash scripts/macos/install-local-stack.sh \
   --enable-autostart
 ```
 
-## Подключение MCP в Codex
+## MCP setup for Codex
 
-Рекомендуемый способ: запускать прямой Python module entrypoint.
+The recommended approach is to use the direct Python module entrypoint.
 
-Блок для `~/.codex/config.toml`:
+Block for `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.ragconnect]
@@ -100,100 +105,105 @@ RAGCONNECT_CONFIG_PATH = "/Users/<you>/.ragconnect/client_config.yaml"
 RAGCONNECT_PROMPTS_DIR = "/path/to/RAGConnect/config/prompts"
 ```
 
-Скрипты `install-codex-mcp.ps1` / `install-codex-mcp.sh` пишут этот блок автоматически.
+The scripts `install-codex-mcp.ps1` and `install-codex-mcp.sh` write this block automatically.
 
-## Подключение MCP в Claude Desktop
+## MCP setup for Claude Desktop
 
-Для Claude Desktop используется тот же module entrypoint: `python -m client_gateway.mcp_server`.
-Скрипты `install-claude-mcp.ps1` / `install-claude-mcp.sh` автоматически обновляют `claude_desktop_config.json`.
+Claude Desktop uses the same module entrypoint: `python -m client_gateway.mcp_server`.  
+The scripts `install-claude-mcp.ps1` and `install-claude-mcp.sh` update `claude_desktop_config.json` automatically.
 
-## Автозапуск локальной памяти
+## Auto-start for local memory
 
-Если пользователь отвечает "да" на вопрос про автозапуск, агент включает его сам:
-- **Windows**: кладёт `.cmd`-файл в папку `Startup` (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`)
-- **macOS**: создаёт LaunchAgent plist в `~/Library/LaunchAgents/` и сразу загружает его
+If the user answers “yes” to the auto-start question, the agent enables it automatically:
 
-Оба варианта не требуют прав администратора.
+- **Windows**: places a `.cmd` file into the `Startup` folder (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`)
+- **macOS**: creates a LaunchAgent plist in `~/Library/LaunchAgents/` and loads it immediately
 
-## Сниппет для проектного `AGENTS.md` или `CLAUDE.md`
+Neither option requires administrator privileges.
 
-Для проекта, который должен пользоваться проектной памятью, скопируй один из файлов и замени `LABEL_HERE`:
+## Snippet for project `AGENTS.md` or `CLAUDE.md`
+
+For a project that should use project memory, copy one of these files and replace `LABEL_HERE`:
 
 - `config/AGENTS.md.example`
 - `config/CLAUDE.md.example`
 
-Этот сниппет сообщает агенту:
-- какой `project_label` использовать
-- что память надо воспринимать как рабочую память, а не как вспомогательный инструмент
-- когда искать в памяти перед ответом
-- когда обязательно писать результат обратно
-- когда использовать локальную память без label
+This snippet tells the agent:
 
-## Docker-деплой серверной памяти
+- which `project_label` to use
+- that memory should be treated as working memory, not as an optional extra tool
+- when to search memory before replying
+- when results must be written back
+- when to use local memory without a label
 
-### Быстрый путь
+## Docker deployment for shared server memory
 
-1. Скопировать `.env.example` в `.env`.
-2. Заполнить `OPENAI_API_KEY` и `RAGCONNECT_ADMIN_PASSWORD`.
-3. Запустить `docker compose up -d`.
-4. Создать write-token:
+### Quick path
+
+1. Copy `.env.example` to `.env`.
+2. Fill in `OPENAI_API_KEY` and `RAGCONNECT_ADMIN_PASSWORD`.
+3. Run `docker compose up -d`.
+4. Create a write token:
 
 ```bash
 docker compose exec server-gateway ragconnect-server token create --role write --description "Initial user"
 ```
 
-### Что включает текущий Docker-стек
+### What the current Docker stack includes
 
-- LightRAG с OpenAI-compatible binding
-- локальный embedding proxy внутри контейнера LightRAG
-- дефолтную embedding-модель `intfloat/multilingual-e5-small`
-- проектный gateway с token auth
+- LightRAG with OpenAI-compatible binding
+- a local embedding proxy inside the LightRAG container
+- the default embedding model `intfloat/multilingual-e5-small`
+- a project gateway with token auth
 
-То есть Docker-конфигурация повторяет рабочую схему, которая уже была проверена на живом окружении.
+So the Docker configuration mirrors the working setup already validated in a real environment.
 
-## Модель памяти
+## Memory model
 
-- без `project_label` -> локальная личная память
-- с `project_label="some-project"` -> общая проектная память этого проекта
-- личные заметки нужно держать локально
-- проектные знания нужно держать в проектной памяти
+- without `project_label` -> local personal memory
+- with `project_label="some-project"` -> shared project memory for that project
+- personal notes should stay in local memory
+- project knowledge should stay in project memory
 
-## MCP-промпты
+## MCP prompts
 
-Промпты, которые задают поведение агента по памяти, лежат здесь:
+The prompts that define memory behavior for the agent are stored here:
 
 - `config/prompts/global.md`
 - `config/prompts/rules.md`
 
-Они специально написаны так, чтобы агент воспринимал память как свою внешнюю долговременную память и пользовался ей проактивно.
+They are intentionally written so the agent treats memory as an external long-term memory layer and uses it proactively.
 
-## Итоговый список вопросов, которые должен задать агент
+## Technical notes
 
-1. Нужна только локальная память или ещё и проектная память на своём сервере?
-2. Если нужен сервер, какие SSH-параметры подключения использовать?
-3. Установлен ли Docker на текущей машине?
-4. Если нужен сервер, есть ли sudo-пароль или passwordless sudo?
-5. Есть ли домен для сервера?
-6. Если домен есть, настроены ли уже DNS A/AAAA записи?
-7. Какой Git URL использовать на сервере?
-8. Какую ветку или тег деплоить?
-9. Откуда брать `OPENAI_API_KEY`?
-10. Используется стандартный OpenAI endpoint или совместимый?
-11. Если endpoint совместимый, какой `OPENAI_API_BASE`?
-12. Нужны ли кастомные `LLM_MODEL` и `EMBEDDING_MODEL`?
-13. Нужна локальная память, проектная память или обе?
-14. Какой `memory-label` нужен этому проекту?
-15. Какой URL у Server Gateway?
-16. Какой `tok_...` использовать для проектной памяти?
-17. Должны ли запросы без label идти в локальную память?
-18. Нужен ли `remote_only_mode=true`?
-19. Нужна ли строгая маршрутизация без fallback?
-20. Нужно ли автоматически настроить MCP для Codex, Claude Desktop или обоих?
-21. Нужен ли автозапуск локальной памяти при входе в систему?
+- default local embeddings: `intfloat/multilingual-e5-small`, dimension `384`
+- direct Codex MCP entrypoint: `python -m client_gateway.mcp_server`
+- `pyproject.toml` uses `setuptools.build_meta`, so editable install works normally
+- current Windows auto-start uses the `Startup` folder
 
-## Технические заметки
+## How it works
 
-- локальные embeddings по умолчанию: `intfloat/multilingual-e5-small`, размерность `384`
-- прямой Codex MCP entrypoint: `python -m client_gateway.mcp_server`
-- `pyproject.toml` использует `setuptools.build_meta`, поэтому editable install работает штатно
-- текущий Windows-автозапуск сделан через папку `Startup`
+RAGConnect keeps the architecture simple:
+
+- one local Client Gateway per user
+- one local LightRAG for personal memory
+- one isolated server stack per project
+- one MCP entrypoint for all local AI tools
+
+The Client Gateway receives requests from Codex, Claude Desktop, and other MCP-compatible apps, then decides where to send them:
+
+- no label -> local memory
+- known `project_label` -> project server
+- if project search fails -> local fallback with a warning
+
+Each project server has its own Server Gateway in front of LightRAG. Its job is simple: validate the token and allow or deny access.
+
+Each project token has one of two roles:
+
+- `readonly`
+- `write`
+
+This keeps project memory isolated, avoids complex multi-tenant logic, and makes deployment easier: if you want two projects, you run two servers or two Docker containers.
+
+> Created by Droidje tech developers for developers around the world  
+> We work for the progress of AI

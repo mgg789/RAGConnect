@@ -1,61 +1,68 @@
-﻿# Правила bootstrap для памяти RAGConnect
+﻿# RAGConnect Memory Bootstrap Rules
 
-Эти инструкции намеренно одинаковые для `AGENTS.md` и `CLAUDE.md`.
-Их цель: собрать у пользователя конфигурацию обычным языком, настроить память без требования открывать терминал и затем пользоваться этой памятью как рабочей долговременной памятью агента.
+These instructions are intentionally identical for `AGENTS.md` and `CLAUDE.md`.
 
-## Цель
+Their goal is to collect configuration from the user in plain language, set up memory without requiring terminal usage, and then use that memory as a working long-term memory for the agent.
 
-Используй RAGConnect как реальную рабочую память, а не как необязательный инструмент.
+## Goal
 
-- Локальная память это личная память по умолчанию.
-- Проектная память выбирается по `project_label`.
-- Для конкретного проекта label задаётся так:
+Use RAGConnect as a real working memory, not as an optional tool.
+
+- Local memory is the default personal memory.
+- Project memory is selected via `project_label`.
+- For a specific project, the label is set as:
 
 memory-label = "LABEL_HERE"
 
-## Обязательный порядок вопросов
+## Required Question Flow
 
-Перед изменением настроек памяти, установкой MCP, включением автозапуска или деплоем сервера задай пользователю вопросы в этом точном порядке и на языке пользователя.
-Не пропускай вопросы. Не подставляй значения молча.
+Before modifying memory settings, installing MCP, enabling autostart, or deploying a server, ask the user questions in this exact order and in the user’s language.  
+Do not skip questions. Do not silently assume values.
 
-0. Дай краткую инфо по проекту: "Добро пожаловать в RAGConnect. Сервис даст вашим ИИ-агентам общую память и разделит её на локальную (вашу) и проектную (общую с вашими коллегами), для каждого проекта своя. Сейчас ваш ИИ-агент поможет вам всё настроить. Для этого вам нужно ответить на несколько вопросов.
-Спасибо за доверие! MIT License (c) 2026 Mike Gumenyuk (Droidje tech)"
-1. Нужна только локальная память (только для ваших агентов + подключение к уже созданным проектам) или ещё и проектная память на собственном сервере (для вашей команды)?
-2. Если нужен сервер, дай SSH-параметры: host, port, username и способ аутентификации.
-3. Установлен ли Docker и доступен ли он сейчас на этой машине (напишите если хотите работу приложения без Docker)?
-4. Если нужен сервер, дай sudo-пароль или подтверди passwordless sudo.
-5. Есть ли уже домен для сервера? Если да, какой?
-6. Если домен есть, подтверждены ли уже DNS A/AAAA записи на IP сервера (если нет, установи)?
-7. Какой Git URL использовать для клонирования репрезитория на сервер (наш репрезиторий по умолчанию)?
-8. Какую ветку или тег нужно развернуть?
-9. Где хранится `OPENAI_API_KEY`: в окружении, в `.env` (если нигде, дайте мне его сейчас )?
-10. Используется дефолтный OpenAI endpoint или OpenAI-compatible endpoint (он нужен для работы LightRAG, подойдет любая API LLM)?
-11. Если используется совместимый endpoint, какой `OPENAI_API_BASE` (URL эндпоинта)?
-12. Нужны ли кастомные `LLM_MODEL` (gpt-5.4-mini по умолчанию) и `EMBEDDING_MODEL` (по умолчанию локальные)? Если да, попроси оба значения.
-13. Настроить сразу локальная память, удалённая проектную память или обе?
-14. Если нужна проектная память, какой `memory-label` нужен репризиторию и какой путь до нужного репризитория?
-15. Если используется проектная память, какой URL у Server Gateway? Если пользователь сразу настраивает и проектную память на сервере, предложи использовать ранее полученный URL
-16. Если используется проектная память, какой RAGConnect access token `tok_...` ? Если пользователь сразу настраивает и проектную память на сервере, предложи создать на сервере токен и подключить его к этому ПК при развертывании
-17. Должны ли запросы без label идти в локальную память?
-18. Нужен ли `remote_only_mode=true`?
-19. Нужна ли строгая маршрутизация без fallback, если label неверный или проектная память недоступна (fallback будет делать автопоиск по локальной памяти)?
-20. Нужно ли автоматически настроить MCP для Codex, Claude Desktop или обоих (вы можете это сделать сами позже)?
-21. Нужно ли автоматически запускать локальную память при запуске системы?
-22. Какие логин и пароль задать для администрирования токена и графа на удаленном сервере (вы можете настроить это позже в окружении)? Только если юзер настраивает сразу проектный сервер
+0. Provide a short intro:  
+   "Welcome to RAGConnect. This service gives your AI agents shared memory and separates it into local (your personal) and project (shared with your team). Each project has its own memory. Your AI agent will now help you set everything up. Please answer a few questions.  
+   Thank you for your trust! MIT License (c) 2026 Mike Gumenyuk (Droidje tech)"
 
-Если пользователь не уверен насчёт Docker, можно проверить:
+1. Do you need only local memory (for your agents + connecting to existing projects), or also project memory on your own server (for your team)?
+2. If a server is needed, provide SSH parameters: host, port, username, and authentication method.
+3. Is Docker installed and currently available on this machine (or do you want to run without Docker)?
+4. If a server is needed, provide the sudo password or confirm passwordless sudo.
+5. Do you already have a domain for the server? If yes, which one?
+6. If a domain exists, are DNS A/AAAA records already pointing to the server IP (if not, set them)?
+7. Which Git URL should be used to clone the repository on the server (default: [our repository](https://github.com/mgg789/RAGConnect.git))?
+8. Which branch or tag should be deployed?
+9. Where is `OPENAI_API_KEY` stored: environment, `.env`, or nowhere (if nowhere, provide it now)?
+10. Are you using the default OpenAI endpoint or an OpenAI-compatible endpoint (required for LightRAG, any LLM API is acceptable. If you don't have it, create new on Timeweb (gpt-nano will be quit enough))?
+11. If using a compatible endpoint, what is `OPENAI_API_BASE` (endpoint URL)?
+12. Do you need custom `LLM_MODEL` (default: gpt-5.4-mini) and `EMBEDDING_MODEL` (default: local)? If yes, request both values.
+13. Should we configure local memory, remote project memory, or both?
+14. If project memory is needed, what `memory-label` should be used for the repository and what is the repository path?
+15. If using project memory, what is the Server Gateway URL? If setting up a new server, suggest using the generated URL.
+16. If using project memory, what is the RAGConnect access token (`tok_...`)? If setting up a new server, suggest creating one during deployment and linking it to this machine.
+17. Should requests without a label go to local memory?
+18. Is `remote_only_mode=true` required?
+19. Should strict routing be enabled without fallback if the label is invalid or project memory is unavailable (fallback would use local memory)?
+20. Should MCP be automatically configured for Codex, Claude Desktop, or both (you can configure later)?
+21. Should local memory start automatically on system startup?
+22. What login and password should be set for admin access (token and graph management on the remote server)? (Only if configuring a project server)
+
+If the user is unsure about Docker, you may check:
 - `docker --version`
 - `docker compose version`
 
-## Делай всё сам, без консоли для пользователя
+## Perform Setup Without User Terminal
 
-Если задачу можно выполнить самим агентом, не проси пользователя вручную открывать терминал, копировать команды или редактировать конфиги.
-Агент должен делать настройку сам.
-Далее напиши пользователю
+If the task can be performed by the agent, do not ask the user to open a terminal, copy commands, or edit configs manually.  
+The agent must handle setup automatically.
 
-### Локальная настройка на Windows
+Then inform the user.
 
-Для Windows используй скрипты репозитория:
+---
+
+## Local Setup on Windows
+
+Use repository scripts:
+
 - `scripts/windows/install-local-stack.ps1`
 - `scripts/windows/install-codex-mcp.ps1`
 - `scripts/windows/install-claude-mcp.ps1`
@@ -64,12 +71,15 @@ memory-label = "LABEL_HERE"
 - `scripts/windows/start-local-stack.ps1`
 - `scripts/windows/stop-local-stack.ps1`
 
-Если пользователь ответил "да" на автозапуск, включи его автоматически.
-Если пользователь ответил "да" на MCP для Codex или Claude Desktop, измени эти конфиги автоматически.
+If the user enabled autostart, configure it automatically.  
+If MCP for Codex or Claude Desktop is enabled, update configs automatically.
 
-### Локальная настройка на macOS
+---
 
-Для macOS используй скрипты репозитория:
+## Local Setup on macOS
+
+Use repository scripts:
+
 - `scripts/macos/install-local-stack.sh`
 - `scripts/macos/install-codex-mcp.sh`
 - `scripts/macos/install-claude-mcp.sh`
@@ -78,41 +88,71 @@ memory-label = "LABEL_HERE"
 - `scripts/macos/start-local-stack.sh`
 - `scripts/macos/stop-local-stack.sh`
 
-Автозапуск на macOS реализован через LaunchAgent (`~/Library/LaunchAgents/com.ragconnect.local-stack.plist`).
-Claude Desktop config на macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`.
-Все скрипты принимают `--repo-root /path/to/RAGConnect`. Запускай их напрямую, не требуя от пользователя консоли.
+Autostart uses LaunchAgent:
+~/Library/LaunchAgents/com.ragconnect.local-stack.plist
 
-### Деплой сервера
+Claude Desktop config:
+~/Library/Application Support/Claude/claude_desktop_config.json
 
-Если пользователь просит серверный деплой, агент обязан:
-1. Подключиться по SSH.
-2. Установить Docker и Docker Compose, если их нет.
-3. Склонировать нужный репозиторий и переключиться на нужную ветку или тег.
-4. Создать `.env` из `.env.example` и заполнить обязательные значения.
-5. Запустить `docker compose up -d`.
-6. Создать проектный токен и вернуть пользователю только замаскированный вид.
-7. Если используется домен, проверить DNS до публикации endpoint.
-8. После деплоя проверить `/health`, `write` и `search`.
+All scripts accept:
+--repo-root /path/to/RAGConnect
 
-## Что написать юзеру после деплоя (на языке пользователя)
-"Ваша память RAGConnect настроена. Изучите наш README.md что бы понять как ей пользоваться, или просто спросите вашего ИИ-агента. Используйте сниппет"
-Далее напиши пользователю все эндпоинты с описанием где что делать для локальной и проектной памяти (если есть), логин и пароль админа (если есть) а также краткую информацию по тому что сделано и важное инфо для юзера
-После этого только сниппет из config\AGENTS.md.example с подписью "Добавляйте эту вставку в CLAUDE.md/AGENTS.md тех проектов где хотите использовать проектную память. (не забудьте поменять memory-label на нужный)"
+Run them directly without requiring user interaction.
 
-## Как пользоваться памятью после настройки
+---
 
-Считай память своей внешней долговременной памятью.
+## Server Deployment
 
-- Перед ответами про архитектуру, историю решений, ограничения, баги, прошлую работу и договорённости сначала делай `memory_search`.
-- После решений, важных находок, root cause, уточнений требований и завершённых этапов делай `memory_write`.
-- Для проектной работы всегда используй `project_label="LABEL_HERE"`.
-- Для личных заметок и кросс-проектных заметок не передавай `project_label` и используй локальную память.
-- Никогда молча не игнорируй ошибки записи в память.
-- Если ответ уже есть в памяти, используй его.
+If the user requests server deployment, the agent must:
 
-## Правила безопасности
+1. Connect via SSH.
+2. Install Docker and Docker Compose if missing.
+3. Clone the repository and checkout the specified branch/tag.
+4. Create `.env` from `.env.example` and fill required values.
+5. Run:
+   docker compose up -d
+6. Create a project token and return only a masked version.
+7. If using a domain, verify DNS before exposing the endpoint.
+8. After deployment, validate:
+   - `/health`
+   - `write`
+   - `search`
 
-- Никогда не печатай API keys, токены и пароли в открытом виде.
-- Маскируй секреты в логах и в отчётах.
-- Если обязательного значения не хватает, сначала спроси пользователя.
-- Если пользователь просит Docker-режим, а Docker недоступен, переходи в local-only режим только после подтверждения пользователя.
+---
+
+## Post-Deployment Message (in user language)
+
+"Your RAGConnect memory is now configured. Check our README.md to learn how to use it, or simply ask your AI agent. Use the snippet below."
+
+Then provide:
+- All endpoints (local + project if applicable)
+- Admin credentials (if applicable)
+- Short summary of what was done
+- Important notes
+
+Then include only the snippet from `config/AGENTS.md.example` with the note:
+
+"Add this snippet to CLAUDE.md/AGENTS.md in projects where you want to use project memory (don’t forget to update memory-label)."
+
+---
+
+## Using Memory After Setup
+
+Treat memory as your external long-term memory.
+
+- Before answering questions about architecture, decisions, constraints, bugs, history, or agreements → call `memory_search`.
+- After decisions, findings, root causes, requirement clarifications, or completed steps → call `memory_write`.
+- For project work always use:
+  project_label="LABEL_HERE"
+- For personal or cross-project notes, omit `project_label` (use local memory).
+- Never silently ignore memory write errors.
+- If the answer already exists in memory, reuse it.
+
+---
+
+## Security Rules
+
+- Never expose API keys, tokens, or passwords.
+- Mask secrets in logs and reports.
+- If required data is missing, ask the user first.
+- If Docker mode is requested but unavailable, switch to local-only mode only after user confirmation.

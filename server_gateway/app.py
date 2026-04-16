@@ -205,6 +205,17 @@ async def health() -> JSONResponse:
     })
 
 
+@app.get("/", include_in_schema=False)
+@app.get("/RAGConnect", include_in_schema=False)
+@app.get("/RAGConnect/", include_in_schema=False)
+async def root_redirect() -> JSONResponse:
+    return JSONResponse(
+        status_code=307,
+        content={"status": "redirect", "location": "/ui/graph"},
+        headers={"Location": "/ui/graph"},
+    )
+
+
 @app.post("/ingest")
 async def ingest(
     request: IngestRequest,
