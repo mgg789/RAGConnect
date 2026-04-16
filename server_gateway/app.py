@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import os
 import secrets
+import time
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import Optional
 
@@ -41,6 +43,14 @@ _token_store = TokenStore(TOKEN_STORE_PATH)
 _lightrag = LightRAGClient(LIGHTRAG_URL)
 ADMIN_USERNAME = os.environ.get("RAGCONNECT_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("RAGCONNECT_ADMIN_PASSWORD", "")
+RATE_LIMIT_REQUESTS = int(os.environ.get("RAGCONNECT_RATE_LIMIT_REQUESTS", "120"))
+RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("RAGCONNECT_RATE_LIMIT_WINDOW_SECONDS", "60"))
+BRUTE_FORCE_MAX_ATTEMPTS = int(os.environ.get("RAGCONNECT_ADMIN_MAX_ATTEMPTS", "5"))
+BRUTE_FORCE_WINDOW_SECONDS = int(os.environ.get("RAGCONNECT_ADMIN_WINDOW_SECONDS", "300"))
+BRUTE_FORCE_BLOCK_SECONDS = int(os.environ.get("RAGCONNECT_ADMIN_BLOCK_SECONDS", "900"))
+_request_history: dict[str, deque[float]] = defaultdict(deque)
+_admin_failures: dict[str, deque[float]] = defaultdict(deque)
+_admin_blocks_until: dict[str, float] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +64,28 @@ async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
 
 @app.middleware("http")
 async def _security_headers(request: Request, call_next):
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+
+    # Generic API rate limiting by client IP.
+    request_bucket = _request_history[client_ip]
+    while request_bucket and request_bucket[0] <= now - RATE_LIMIT_WINDOW_SECONDS:
+        request_bucket.popleft()
+    if len(request_bucket) >= RATE_LIMIT_REQUESTS:
+        retry_after = int(request_bucket[0] + RATE_LIMIT_WINDOW_SECONDS - now) + 1
+        return JSONResponse(
+            status_code=429,
+            content={
+                "status": "error",
+                "error": {
+                    "code": "rate_limited",
+                    "message": "Too many requests. Please retry later.",
+                },
+            },
+            headers={"Retry-After": str(max(retry_after, 1))},
+        )
+    request_bucket.append(now)
+
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -171,13 +203,41 @@ async def ingest(
         return _err(ERROR_DESTINATION_UNAVAILABLE, "LightRAG unavailable.", 503)
 
 
-async def _require_admin(credentials: HTTPBasicCredentials = Depends(_admin_basic)) -> None:
+async def _require_admin(
+    request: Request,
+    credentials: HTTPBasicCredentials = Depends(_admin_basic),
+) -> None:
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+
+    # Brute-force protection with temporary lockout.
+    blocked_until = _admin_blocks_until.get(client_ip)
+    if blocked_until and blocked_until > now:
+        retry_after = int(blocked_until - now) + 1
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed admin login attempts. Retry in {retry_after} seconds.",
+            headers={"Retry-After": str(max(retry_after, 1))},
+        )
+    if blocked_until and blocked_until <= now:
+        _admin_blocks_until.pop(client_ip, None)
+
     if not ADMIN_PASSWORD:
         raise HTTPException(status_code=503, detail="Admin password is not configured.")
     valid_user = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
     valid_pass = secrets.compare_digest(credentials.password, ADMIN_PASSWORD)
     if not (valid_user and valid_pass):
+        failures = _admin_failures[client_ip]
+        while failures and failures[0] <= now - BRUTE_FORCE_WINDOW_SECONDS:
+            failures.popleft()
+        failures.append(now)
+        if len(failures) >= BRUTE_FORCE_MAX_ATTEMPTS:
+            _admin_blocks_until[client_ip] = now + BRUTE_FORCE_BLOCK_SECONDS
+            failures.clear()
         raise HTTPException(status_code=401, detail="Invalid admin credentials.")
+
+    # Successful login resets failure counter for this IP.
+    _admin_failures.pop(client_ip, None)
 
 
 @app.get("/documents")

@@ -71,3 +71,5 @@ Set `memory-label = "your_project_label"` in repository instructions.
 - LightRAG container is internal-only by default in compose.
 - Admin endpoint `/admin/graph` uses HTTP Basic auth (`RAGCONNECT_ADMIN_USERNAME` / `RAGCONNECT_ADMIN_PASSWORD`).
 - Runtime token store supports hashed tokens with expiration.
+- Server has IP-based request rate limiting (`RAGCONNECT_RATE_LIMIT_*`).
+- Admin auth has brute-force protection with temporary IP lockout (`RAGCONNECT_ADMIN_*` window/block settings).
