@@ -613,58 +613,61 @@ _CONFIGS_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RAGConnect — Token Management</title>
+<title>RAGConnect — Tokens</title>
 <style>
-  :root{--bg:#f5f6f8;--surface:#fff;--border:#e0e3e8;--accent:#3b6ff5;--accent2:#2d58d6;--danger:#e0423a;--success:#1a8a55;--muted:#6b7280;--text:#1a1d23;--code-bg:#f0f2f5;}
+  :root{--bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2a2d3a;--accent:#3b6ff5;--accent2:#2d58d6;--danger:#e0423a;--success:#1a8a55;--muted:#6b7280;--text:#e8eaf0;--code-bg:#13151f;}
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.5}
-  header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 2rem;height:56px;display:flex;align-items:center;justify-content:space-between}
-  header .logo{font-weight:700;font-size:1.1rem;letter-spacing:-.3px}
-  header .sub{color:var(--muted);font-size:.85rem}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.5;min-height:100vh}
+  header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 2rem;height:52px;display:flex;align-items:center;justify-content:space-between}
+  header .logo{font-weight:700;font-size:1rem;letter-spacing:-.3px}
+  header .sub{color:var(--muted);font-size:.8125rem}
   main{max-width:960px;margin:2rem auto;padding:0 1.25rem}
   .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:1.5rem;overflow:hidden}
   .card-head{padding:.875rem 1.5rem;border-bottom:1px solid var(--border);font-weight:600;font-size:.9375rem;display:flex;justify-content:space-between;align-items:center}
   .card-body{padding:1.5rem}
   table{width:100%;border-collapse:collapse}
   th,td{padding:.5625rem .75rem;text-align:left}
-  th{font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);border-bottom:1px solid var(--border)}
+  th{font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);border-bottom:1px solid var(--border)}
   tr:not(:last-child) td{border-bottom:1px solid var(--border)}
-  code{font-family:"SF Mono",ui-monospace,monospace;font-size:.8rem;background:var(--code-bg);padding:.1em .45em;border-radius:4px}
+  code{font-family:"SF Mono",ui-monospace,monospace;font-size:.78rem;background:var(--code-bg);padding:.1em .45em;border-radius:4px;color:#a5b4fc}
   .badge{display:inline-block;padding:.175em .55em;border-radius:5px;font-size:.72rem;font-weight:600}
-  .badge-write{background:#d1fadf;color:var(--success)}
-  .badge-readonly{background:#e0e7ff;color:#3730a3}
-  .badge-on{background:#d1fadf;color:var(--success)}
-  .badge-off{background:#f0f2f5;color:var(--muted)}
-  .badge-expired{background:#fee2e2;color:#7f1d1d}
+  .badge-write{background:rgba(26,138,85,.2);color:#34d399;border:1px solid rgba(52,211,153,.25)}
+  .badge-readonly{background:rgba(99,102,241,.2);color:#a5b4fc;border:1px solid rgba(165,180,252,.25)}
+  .badge-on{background:rgba(26,138,85,.2);color:#34d399;border:1px solid rgba(52,211,153,.25)}
+  .badge-off{background:rgba(107,114,128,.15);color:var(--muted);border:1px solid var(--border)}
+  .badge-expired{background:rgba(224,66,58,.2);color:#f87171;border:1px solid rgba(248,113,113,.25)}
   .btn{padding:.4rem .875rem;border:none;border-radius:7px;font-size:.875rem;font-weight:500;cursor:pointer;transition:.12s;white-space:nowrap}
   .btn-primary{background:var(--accent);color:#fff}
   .btn-primary:hover{background:var(--accent2)}
   .btn-ghost{background:transparent;border:1px solid var(--border);color:var(--text)}
-  .btn-ghost:hover{background:var(--bg)}
-  .btn-danger-ghost{background:transparent;border:1px solid #fca5a5;color:var(--danger)}
+  .btn-ghost:hover{background:var(--surface2)}
+  .btn-danger-ghost{background:transparent;border:1px solid rgba(224,66,58,.4);color:#f87171}
   .btn-danger-ghost:hover{background:var(--danger);color:#fff;border-color:var(--danger)}
   .btn-sm{padding:.25rem .6rem;font-size:.8125rem}
   .form-row{display:flex;gap:.75rem;flex-wrap:wrap;align-items:flex-end}
   .fg{display:flex;flex-direction:column;gap:.25rem;flex:1;min-width:120px}
   .fg.lg{min-width:200px}
   .fg label{font-size:.78rem;font-weight:500;color:var(--muted)}
-  .fg input,.fg select{padding:.46rem .75rem;border:1px solid var(--border);border-radius:7px;font-size:.9375rem;width:100%;background:var(--surface);color:var(--text);transition:border-color .15s}
-  .fg input:focus,.fg select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,111,245,.15)}
+  .fg input,.fg select{padding:.46rem .75rem;border:1px solid var(--border);border-radius:7px;font-size:.9375rem;width:100%;background:var(--surface2);color:var(--text);transition:border-color .15s}
+  .fg input:focus,.fg select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,111,245,.2)}
+  .fg select option{background:var(--surface2)}
   .alert{padding:.7rem 1rem;border-radius:8px;margin-bottom:1.25rem;font-size:.9rem;display:none;align-items:center;gap:.6rem}
   .alert.show{display:flex}
-  .alert-ok{background:#d1fadf;color:#065f35;border:1px solid #a7f3c0}
-  .alert-err{background:#fee2e2;color:#7f1d1d;border:1px solid #fca5a5}
+  .alert-ok{background:rgba(26,138,85,.15);color:#34d399;border:1px solid rgba(52,211,153,.3)}
+  .alert-err{background:rgba(224,66,58,.15);color:#f87171;border:1px solid rgba(248,113,113,.3)}
   .empty-row td{color:var(--muted);text-align:center;padding:2rem}
+  .hint{font-size:.8125rem;color:var(--muted);margin-top:.5rem}
   /* Modal */
-  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:100}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;z-index:100}
   .modal-bg.show{display:flex}
-  .modal{background:var(--surface);border-radius:12px;padding:2rem;width:520px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.2)}
-  .modal h2{font-size:1.1rem;margin-bottom:.375rem}
+  .modal{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:2rem;width:520px;max-width:95vw;box-shadow:0 24px 64px rgba(0,0,0,.5)}
+  .modal h2{font-size:1.05rem;margin-bottom:.375rem}
   .modal p{font-size:.875rem;color:var(--muted);margin-bottom:1.25rem}
-  .token-box{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:.875rem 1rem;font-family:"SF Mono",monospace;font-size:.85rem;word-break:break-all;margin-bottom:1.25rem;cursor:pointer;position:relative}
-  .token-box:hover::after{content:"Copied!";position:absolute;right:.75rem;top:50%;transform:translateY(-50%);font-size:.75rem;color:var(--success)}
+  .token-box{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:.875rem 1rem;font-family:"SF Mono",monospace;font-size:.82rem;word-break:break-all;margin-bottom:1.25rem;cursor:pointer;color:#a5b4fc;transition:border-color .15s}
+  .token-box:hover{border-color:var(--accent)}
+  .modal-meta{font-size:.8125rem;color:var(--muted);margin-bottom:1.25rem}
+  .modal-meta strong{color:var(--text)}
   .modal-actions{display:flex;justify-content:flex-end;gap:.5rem}
-  .hint{font-size:.8125rem;color:var(--muted);margin-top:.375rem}
 </style>
 </head>
 <body>
@@ -674,14 +677,13 @@ _CONFIGS_HTML = r"""<!DOCTYPE html>
     <span class="logo">RAGConnect</span>
     <span class="sub">Token Management</span>
   </div>
-  <a href="/ui/graph" class="btn btn-ghost" style="text-decoration:none;font-size:.875rem">View Graph</a>
+  <a href="/ui/graph" class="btn btn-ghost" style="text-decoration:none;font-size:.875rem">Graph</a>
 </header>
 
 <main>
 
 <div id="alert" class="alert" role="alert"></div>
 
-<!-- ── Token list ── -->
 <div class="card">
   <div class="card-head">
     <span>Access Tokens</span>
@@ -690,7 +692,7 @@ _CONFIGS_HTML = r"""<!DOCTYPE html>
   <div style="padding:0">
     <table>
       <thead><tr>
-        <th>ID</th><th>Role</th><th>Status</th><th>Expires</th><th>Description</th><th style="width:100px"></th>
+        <th>ID</th><th>Role</th><th>Status</th><th>Expires</th><th>Description</th><th style="width:90px"></th>
       </tr></thead>
       <tbody id="tok-tbody">
         <tr class="empty-row"><td colspan="6">Loading…</td></tr>
@@ -699,13 +701,12 @@ _CONFIGS_HTML = r"""<!DOCTYPE html>
   </div>
 </div>
 
-<!-- ── Create token ── -->
 <div class="card">
   <div class="card-head">Create Token</div>
   <div class="card-body">
     <form id="create-form">
       <div class="form-row">
-        <div class="fg" style="max-width:160px">
+        <div class="fg" style="max-width:150px">
           <label>Role</label>
           <select name="role">
             <option value="write">write</option>
@@ -723,19 +724,18 @@ _CONFIGS_HTML = r"""<!DOCTYPE html>
         <button type="submit" class="btn btn-primary">Create</button>
       </div>
     </form>
-    <p class="hint">The raw token is shown <strong>once</strong> after creation and is never stored.</p>
+    <p class="hint">The raw token is shown <strong style="color:var(--text)">once</strong> after creation and is never stored in plain text.</p>
   </div>
 </div>
 
 </main>
 
-<!-- ── New-token modal ── -->
 <div id="modal-bg" class="modal-bg">
   <div class="modal">
     <h2>Token created</h2>
     <p>Copy it now — it will not be shown again.</p>
-    <div id="modal-token" class="token-box" onclick="copyToken()"></div>
-    <div style="font-size:.8125rem;color:var(--muted);margin-bottom:1.25rem">
+    <div id="modal-token" class="token-box" onclick="copyToken()" title="Click to copy"></div>
+    <div class="modal-meta">
       Role: <strong id="modal-role"></strong> &nbsp;·&nbsp; Expires: <strong id="modal-expires"></strong>
     </div>
     <div class="modal-actions">
@@ -758,10 +758,7 @@ function flash(msg, type) {
 
 function statusBadge(enabled, expires) {
   if (!enabled) return '<span class="badge badge-off">revoked</span>';
-  if (expires) {
-    const dt = new Date(expires);
-    if (dt < new Date()) return '<span class="badge badge-expired">expired</span>';
-  }
+  if (expires && new Date(expires) < new Date()) return '<span class="badge badge-expired">expired</span>';
   return '<span class="badge badge-on">active</span>';
 }
 
@@ -788,13 +785,13 @@ async function loadTokens() {
         : '<span class="badge badge-readonly">readonly</span>';
       const revBtn = t.enabled
         ? `<button class="btn btn-sm btn-danger-ghost" onclick="revoke('${t.token_id}')">Revoke</button>`
-        : '<span style="color:var(--muted);font-size:.8125rem">—</span>';
+        : '<span style="color:var(--muted);font-size:.8125rem">revoked</span>';
       return `<tr>
-        <td><code style="font-size:.75rem">${t.token_id || '—'}</code></td>
+        <td><code>${t.token_id || '—'}</code></td>
         <td>${roleBadge}</td>
         <td>${statusBadge(t.enabled, t.expires_at)}</td>
         <td style="font-size:.8125rem;color:var(--muted)">${fmtExpires(t.expires_at)}</td>
-        <td style="font-size:.8125rem">${t.description || '<span style="color:var(--muted)">—</span>'}</td>
+        <td style="font-size:.8125rem;color:var(--muted)">${t.description || '—'}</td>
         <td>${revBtn}</td>
       </tr>`;
     }).join('');
@@ -806,7 +803,7 @@ $('create-form').addEventListener('submit', async e => {
   const fd = new FormData(e.target);
   const r = await fetch('/admin/tokens', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {'Content-Type':'application/json'},
     credentials: 'include',
     body: JSON.stringify({
       role: fd.get('role'),
@@ -841,19 +838,11 @@ function showModal(token, role, expires) {
   $('modal-expires').textContent = fmtExpires(expires);
   $('modal-bg').classList.add('show');
 }
-
-function closeModal() {
-  $('modal-bg').classList.remove('show');
-}
-
+function closeModal() { $('modal-bg').classList.remove('show'); }
 async function copyToken() {
-  const text = $('modal-token').textContent;
-  try { await navigator.clipboard.writeText(text); } catch { }
+  try { await navigator.clipboard.writeText($('modal-token').textContent); flash('Copied to clipboard.', 'ok'); } catch {}
 }
-
-$('modal-bg').addEventListener('click', e => {
-  if (e.target === $('modal-bg')) closeModal();
-});
+$('modal-bg').addEventListener('click', e => { if (e.target === $('modal-bg')) closeModal(); });
 
 loadTokens();
 </script>
