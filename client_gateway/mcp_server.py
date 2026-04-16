@@ -20,14 +20,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import sys
-from contextlib import asynccontextmanager
 from pathlib import Path
 
-import anyio
 import mcp.types as types
 from mcp.server import Server
-from mcp.shared.message import SessionMessage
+from mcp.server.stdio import stdio_server
 
 from client_gateway.config import find_local, load_config
 from client_gateway.router import Router
@@ -37,75 +34,6 @@ from shared.models import HealthResponse, HealthStatus, ListProjectsResponse, Pr
 
 server = Server("ragconnect-client-gateway")
 PROMPTS_DIR = Path(os.environ.get("RAGCONNECT_PROMPTS_DIR", "config/prompts"))
-
-
-@asynccontextmanager
-async def codex_stdio_server():
-    """MCP stdio transport compatible with Content-Length framing used by Codex."""
-    stdin = sys.stdin.buffer
-    stdout = sys.stdout.buffer
-
-    read_stream_writer, read_stream = anyio.create_memory_object_stream(0)
-    write_stream, write_stream_reader = anyio.create_memory_object_stream(0)
-
-    async def stdin_reader():
-        try:
-            async with read_stream_writer:
-                while True:
-                    content_length: int | None = None
-
-                    while True:
-                        line = await anyio.to_thread.run_sync(stdin.readline)
-                        if not line:
-                            return
-                        if line in (b"\r\n", b"\n"):
-                            break
-
-                        try:
-                            header = line.decode("ascii").strip()
-                        except UnicodeDecodeError as exc:
-                            await read_stream_writer.send(exc)
-                            content_length = None
-                            break
-
-                        if header.lower().startswith("content-length:"):
-                            content_length = int(header.split(":", 1)[1].strip())
-
-                    if content_length is None:
-                        continue
-
-                    body = await anyio.to_thread.run_sync(stdin.read, content_length)
-                    if not body:
-                        return
-
-                    try:
-                        message = types.JSONRPCMessage.model_validate_json(body.decode("utf-8"))
-                    except Exception as exc:
-                        await read_stream_writer.send(exc)
-                        continue
-
-                    await read_stream_writer.send(SessionMessage(message))
-        except anyio.ClosedResourceError:
-            await anyio.lowlevel.checkpoint()
-
-    async def stdout_writer():
-        try:
-            async with write_stream_reader:
-                async for session_message in write_stream_reader:
-                    payload = session_message.message.model_dump_json(
-                        by_alias=True,
-                        exclude_none=True,
-                    ).encode("utf-8")
-                    frame = f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii") + payload
-                    await anyio.to_thread.run_sync(stdout.write, frame)
-                    await anyio.to_thread.run_sync(stdout.flush)
-        except anyio.ClosedResourceError:
-            await anyio.lowlevel.checkpoint()
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(stdin_reader)
-        tg.start_soon(stdout_writer)
-        yield read_stream, write_stream
 
 
 # ---------------------------------------------------------------------------
@@ -501,7 +429,7 @@ async def _call_extended_remote(client: ServerGatewayClient, tool_name: str, arg
 
 
 async def main() -> None:
-    async with codex_stdio_server() as (read_stream, write_stream):
+    async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
             write_stream,
