@@ -32,6 +32,14 @@ services:
       OPENAI_API_BASE: ${OPENAI_API_BASE:-https://api.openai.com/v1}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      # Separate embedding API (optional — falls back to OPENAI_API_KEY/BASE)
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_API_BASE: ${EMBEDDING_API_BASE:-}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
+      # Local Jina embedding mode
+      LOCAL_EMBEDDING_MODE: ${LOCAL_EMBEDDING_MODE:-false}
+      LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-jinaai/jina-embeddings-v2-small-en}
+      LOCAL_EMBEDDING_DIM: ${LOCAL_EMBEDDING_DIM:-512}
       NEO4J_URI: ${NEO4J_URI:-}
       NEO4J_USERNAME: ${NEO4J_USERNAME:-}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}

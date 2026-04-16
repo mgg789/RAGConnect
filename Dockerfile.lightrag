@@ -1,24 +1,40 @@
 # syntax=docker/dockerfile:1
 #
-# Minimal LightRAG API server image.
+# LightRAG API server image with split LLM / embedding API support.
 #
-# LightRAG requires an LLM backend (OpenAI-compatible API).
-# Pass your key via the OPENAI_API_KEY environment variable
-# or mount a custom config if your backend differs.
+# Required env vars:
+#   OPENAI_API_KEY        — LLM API key
 #
-# Supported extra env vars (passed straight to LightRAG):
-#   OPENAI_API_BASE  — override the API base URL (e.g. for local models)
-#   LLM_MODEL        — model name (default: gpt-4o-mini)
-#   EMBEDDING_MODEL  — embedding model (default: text-embedding-3-small)
-#   NEO4J_URI        — recommended production graph backend endpoint
-#   NEO4J_USERNAME   — Neo4j username
-#   NEO4J_PASSWORD   — Neo4j password
-#   NEO4J_DATABASE   — Neo4j database name
+# Optional env vars:
+#   OPENAI_API_BASE       — LLM API base URL (default: https://api.openai.com/v1)
+#   LLM_MODEL             — LLM model name (default: gpt-4o-mini)
+#   EMBEDDING_MODEL       — embedding model (default: text-embedding-3-small)
+#   EMBEDDING_API_KEY     — separate key for embeddings (falls back to OPENAI_API_KEY)
+#   EMBEDDING_API_BASE    — separate base URL for embeddings (falls back to OPENAI_API_BASE)
+#   EMBEDDING_DIM         — embedding dimension (default: 1536)
+#   LOCAL_EMBEDDING_MODE  — "true" to use Jina from HuggingFace (no API key needed)
+#   LOCAL_EMBEDDING_MODEL — HF model id (default: jinaai/jina-embeddings-v2-small-en)
+#   LOCAL_EMBEDDING_DIM   — dimension for local model (default: 512)
+#   NEO4J_URI             — recommended production graph backend endpoint
+#   NEO4J_USERNAME        — Neo4j username
+#   NEO4J_PASSWORD        — Neo4j password
+#   NEO4J_DATABASE        — Neo4j database name
 
 FROM python:3.11-slim
 
 # lightrag-hku[api] pulls FastAPI, uvicorn, and all LightRAG deps
-RUN pip install --no-cache-dir "lightrag-hku[api]>=1.0.0"
+# sentence-transformers is needed for LOCAL_EMBEDDING_MODE
+RUN pip install --no-cache-dir \
+    "lightrag-hku[api]>=1.0.0" \
+    "sentence-transformers>=2.7.0" \
+    "httpx>=0.27.0"
+
+WORKDIR /app
+
+# Copy the embedding proxy and startup script
+COPY local_embeddings/ ./local_embeddings/
+COPY lightrag_server/start.sh ./lightrag_server/start.sh
+RUN chmod +x ./lightrag_server/start.sh
 
 WORKDIR /data
 
@@ -28,12 +44,7 @@ EXPOSE 9621
 
 ENV LIGHTRAG_WORKING_DIR=/data/lightrag
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9621/health')"
 
-# The lightrag-server entry point is installed by lightrag-hku[api].
-# Adjust --working-dir, --llm-model, and --embedding-model as needed.
-CMD ["lightrag-server", \
-     "--host", "0.0.0.0", \
-     "--port", "9621", \
-     "--working-dir", "/data/lightrag"]
+CMD ["/app/lightrag_server/start.sh"]
