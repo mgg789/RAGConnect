@@ -16,6 +16,7 @@ dependencies = [
     "mcp>=1.0.0",
     "click>=8.1.7",
     "anyio>=4.0.0",
+    "neo4j>=5.28.0",
 ]
 
 [project.scripts]

@@ -59,10 +59,18 @@ class DestinationIn(BaseModel):
     url: str
     label: Optional[str] = None   # absent → local LightRAG
     token: Optional[str] = None   # absent → native API
+    display_name: Optional[str] = None
+    prefer_for_search: bool = False
+    allow_local_search_augmentation: bool = False
 
 
 class DefaultProjectIn(BaseModel):
     label: Optional[str] = None   # None → clear default
+
+
+class SettingsIn(BaseModel):
+    remote_only_mode: bool = False
+    strict_project_routing: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +105,9 @@ async def add_destination(dest: DestinationIn):
             "label": label,
             "token": dest.token,
             "enabled": True,
+            "display_name": dest.display_name,
+            "prefer_for_search": dest.prefer_for_search,
+            "allow_local_search_augmentation": dest.allow_local_search_augmentation,
         })
 
     data["destinations"] = destinations
@@ -149,6 +160,15 @@ async def set_default_project(body: DefaultProjectIn):
         data["default_project"] = body.label
     else:
         data.pop("default_project", None)
+    _write(data)
+    return {"status": "ok"}
+
+
+@app.put("/api/settings")
+async def set_settings(body: SettingsIn):
+    data = _read()
+    data["remote_only_mode"] = bool(body.remote_only_mode)
+    data["strict_project_routing"] = bool(body.strict_project_routing)
     _write(data)
     return {"status": "ok"}
 
@@ -550,6 +570,11 @@ def main_sync() -> None:
     import uvicorn
     host = os.environ.get("RAGCONNECT_WEB_HOST", "127.0.0.1")
     port = int(os.environ.get("RAGCONNECT_WEB_PORT", "8090"))
+    allow_remote = os.environ.get("RAGCONNECT_ALLOW_REMOTE_WEB", "false").lower() == "true"
+    if host not in {"127.0.0.1", "localhost"} and not allow_remote:
+        raise RuntimeError(
+            "Remote bind is disabled by default. Set RAGCONNECT_ALLOW_REMOTE_WEB=true to override."
+        )
     print(f"RAGConnect Web UI →  http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="warning")
 

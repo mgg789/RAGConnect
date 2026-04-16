@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+from pathlib import Path
 
 import mcp.types as types
 from mcp.server import Server
@@ -31,6 +33,7 @@ from shared.lightrag_client import LightRAGClient
 from shared.models import HealthResponse, HealthStatus, ListProjectsResponse, ProjectInfo
 
 server = Server("ragconnect-client-gateway")
+PROMPTS_DIR = Path(os.environ.get("RAGCONNECT_PROMPTS_DIR", "config/prompts"))
 
 
 # ---------------------------------------------------------------------------
@@ -61,21 +64,7 @@ async def get_prompt(name: str, arguments: dict | None) -> types.GetPromptResult
     local = find_local(config)
     projects = [d for d in config.destinations if not d.is_local]
 
-    lines: list[str] = [
-        "## Memory system",
-        "",
-        "You have access to a distributed memory system. "
-        "Use it to persist and retrieve knowledge across sessions.",
-        "",
-        "### Tools",
-        "| Tool | Purpose |",
-        "|------|---------|",
-        "| `memory_search` | Retrieve context **before** answering questions about a project. |",
-        "| `memory_write`  | Store decisions, agreements, discoveries **immediately** after they occur. |",
-        "| `memory_list_projects` | List available project destinations. |",
-        "| `memory_health` | Check reachability of all destinations. |",
-        "",
-    ]
+    lines: list[str] = _load_prompt_parts("global")
 
     # --- local destination ---
     if local:
@@ -86,10 +75,16 @@ async def get_prompt(name: str, arguments: dict | None) -> types.GetPromptResult
             "- Access: **native API** (no auth, direct LightRAG calls)",
             "",
         ]
-    else:
+    elif not config.remote_only_mode:
         lines += [
             "### Local LightRAG",
             "- **Not configured.** Add one in `ragconnect-web` to enable local memory.",
+            "",
+        ]
+    else:
+        lines += [
+            "### Local LightRAG",
+            "- Remote-only mode is enabled. Local memory is intentionally disabled.",
             "",
         ]
 
@@ -121,15 +116,21 @@ async def get_prompt(name: str, arguments: dict | None) -> types.GetPromptResult
         ]
 
     # --- rules ---
+    lines += _load_prompt_parts("rules")
     lines += [
         "### Rules",
         "- **Always search** before answering questions about architecture, decisions, or past work.",
         "- **Always write** after: design decisions, agreed constraints, discovered issues, "
         "completed milestones.",
         "- Use the project label that matches your current working context.",
-        "- For personal notes or cross-project observations, omit `project_label` "
-        "(goes to local LightRAG).",
+        "- For personal notes, omit `project_label` only when local memory is configured.",
         "- Never silently skip writing — report the error rather than dropping information.",
+        "",
+        f"### Available memory namespaces",
+        "- `Основная_локальная`" if local else "- `Основная_локальная` (disabled)",
+    ]
+    lines += [f"- `{p.label}`" for p in projects if p.label]
+    lines += [
     ]
 
     return types.GetPromptResult(
@@ -212,6 +213,68 @@ async def list_tools() -> list[types.Tool]:
             description="Check reachability of all memory destinations.",
             inputSchema={"type": "object", "properties": {}},
         ),
+        types.Tool(
+            name="memory_graph",
+            description="Get graph payload for a destination.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_label": {"type": "string"},
+                },
+            },
+        ),
+        types.Tool(
+            name="memory_entities",
+            description="List entities from memory graph.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_label": {"type": "string"},
+                },
+            },
+        ),
+        types.Tool(
+            name="memory_relations",
+            description="List relations from memory graph.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_label": {"type": "string"},
+                },
+            },
+        ),
+        types.Tool(
+            name="memory_documents",
+            description="List source documents in memory.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_label": {"type": "string"},
+                },
+            },
+        ),
+        types.Tool(
+            name="memory_ingest_bulk",
+            description="Ingest multiple records to memory.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "texts": {"type": "array", "items": {"type": "string"}},
+                    "project_label": {"type": "string"},
+                },
+                "required": ["texts"],
+            },
+        ),
+        types.Tool(
+            name="memory_rebuild_index",
+            description="Trigger index/graph rebuild.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_label": {"type": "string"},
+                },
+            },
+        ),
     ]
 
 
@@ -290,6 +353,25 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.Content]:
         response = HealthResponse(status=overall, components=components)
         return [types.TextContent(type="text", text=_dump(response.model_dump(exclude_none=True)))]
 
+    if name in {"memory_graph", "memory_entities", "memory_relations", "memory_documents", "memory_ingest_bulk", "memory_rebuild_index"}:
+        config = load_config()
+        label = args.get("project_label")
+        router = Router(config)
+        effective_label = label or config.default_project
+        if not effective_label:
+            local = find_local(config)
+            if not local:
+                raise ValueError("No local destination configured and no project_label provided.")
+            local_client = LightRAGClient(local.url)
+            data = await _call_extended_local(local_client, name, args)
+            return [types.TextContent(type="text", text=_dump({"status": "ok", "source": "local", "data": data}))]
+        dest = next((d for d in config.destinations if d.label == effective_label and d.enabled), None)
+        if not dest:
+            raise ValueError(f"Unknown project label: {effective_label}")
+        remote_client = ServerGatewayClient(dest.url, dest.token or "")
+        data = await _call_extended_remote(remote_client, name, args)
+        return [types.TextContent(type="text", text=_dump({"status": "ok", "source": "project", "data": data}))]
+
     raise ValueError(f"Unknown tool: {name}")
 
 
@@ -299,6 +381,51 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.Content]:
 
 def _dump(obj: object) -> str:
     return json.dumps(obj, ensure_ascii=False, indent=2)
+
+
+def _load_prompt_parts(section: str) -> list[str]:
+    file_path = PROMPTS_DIR / f"{section}.md"
+    if not file_path.exists():
+        return []
+    return file_path.read_text(encoding="utf-8").splitlines()
+
+
+async def _call_extended_local(client: LightRAGClient, tool_name: str, args: dict) -> dict:
+    if tool_name == "memory_graph":
+        return await client.graph()
+    if tool_name == "memory_entities":
+        return await client.entities()
+    if tool_name == "memory_relations":
+        return await client.relations()
+    if tool_name == "memory_documents":
+        return await client.documents()
+    if tool_name == "memory_ingest_bulk":
+        return await client.ingest(args.get("texts", []))
+    if tool_name == "memory_rebuild_index":
+        return await client.rebuild()
+    raise ValueError(f"Unsupported extended local tool: {tool_name}")
+
+
+async def _call_extended_remote(client: ServerGatewayClient, tool_name: str, args: dict) -> dict:
+    if tool_name == "memory_graph":
+        _, data = await client.graph()
+        return data
+    if tool_name == "memory_entities":
+        _, data = await client.entities()
+        return data
+    if tool_name == "memory_relations":
+        _, data = await client.relations()
+        return data
+    if tool_name == "memory_documents":
+        _, data = await client.documents()
+        return data
+    if tool_name == "memory_ingest_bulk":
+        _, data = await client.ingest(args.get("texts", []))
+        return data
+    if tool_name == "memory_rebuild_index":
+        _, data = await client.rebuild()
+        return data
+    raise ValueError(f"Unsupported extended remote tool: {tool_name}")
 
 
 async def main() -> None:

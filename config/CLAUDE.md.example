@@ -7,7 +7,7 @@
 ## Memory
 
 This project uses RAGConnect for persistent memory.
-Project label: **`LABEL_HERE`**
+Memory label: **`LABEL_HERE`**
 
 ### When to read from memory
 
@@ -17,7 +17,7 @@ Before answering any question about:
 - the current state of a feature or component
 - why something was done a particular way
 
-Always call `memory_search` with `project_label="LABEL_HERE"` before answering, even if
+Always call `memory_search` with `project_label="LABEL_HERE"` (derived from `memory-label`) before answering, even if
 you think you already know. Memory may contain more recent information than your training.
 
 ### When to write to memory
@@ -51,5 +51,5 @@ Use `memory_search` / `memory_write` **without** a project_label (routes to loca
 
 | Situation | project_label |
 |-----------|--------------|
-| Working in this project | `LABEL_HERE` |
+| Working in this project (`memory-label`) | `LABEL_HERE` |
 | Personal / cross-project notes | *(omit)* |

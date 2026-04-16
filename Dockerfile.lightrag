@@ -10,6 +10,10 @@
 #   OPENAI_API_BASE  — override the API base URL (e.g. for local models)
 #   LLM_MODEL        — model name (default: gpt-4o-mini)
 #   EMBEDDING_MODEL  — embedding model (default: text-embedding-3-small)
+#   NEO4J_URI        — recommended production graph backend endpoint
+#   NEO4J_USERNAME   — Neo4j username
+#   NEO4J_PASSWORD   — Neo4j password
+#   NEO4J_DATABASE   — Neo4j database name
 
 FROM python:3.11-slim
 

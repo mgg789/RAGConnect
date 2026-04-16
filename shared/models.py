@@ -11,10 +11,16 @@ class TokenRole(str, Enum):
     write = "write"
 
 
+class ResultSource(str, Enum):
+    local = "local"
+    project = "project"
+
+
 class SearchResult(BaseModel):
     text: str
     score: Optional[float] = None
     metadata: Optional[dict] = None
+    source: Optional[ResultSource] = None
 
 
 class WarningInfo(BaseModel):

@@ -14,15 +14,27 @@ destinations:
   # ---- Project destinations (label + token required) ----
   # Requests are proxied through the project's Server Gateway with Bearer auth.
   - label: kettle
+    display_name: Kettle Project
     url: https://kettle-memory.example.com
     token: tok_kettle_user_01_replace_me
     enabled: true
+    prefer_for_search: true
+    allow_local_search_augmentation: true
 
   - label: edu
+    display_name: Education Platform
     url: https://edu-memory.example.com
     token: tok_edu_user_01_replace_me
     enabled: true
+    prefer_for_search: false
+    allow_local_search_augmentation: false
 
 # Optional: when set, memory operations with no explicit project_label route here
 # instead of the local LightRAG.
 # default_project: kettle
+
+# Optional: force project-only mode when local LightRAG is not used.
+# remote_only_mode: true
+
+# Optional: if true, unknown project labels return an error instead of local fallback.
+# strict_project_routing: true

@@ -22,10 +22,12 @@ from __future__ import annotations
 
 import os
 import secrets
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import click
 import yaml
+from server_gateway.token_store import TokenStore
 
 
 # ---------------------------------------------------------------------------
@@ -89,19 +91,27 @@ def token_group() -> None:
     help="Token role.",
 )
 @click.option("--description", default="", help="Human-readable description.")
+@click.option("--expires-days", default=90, show_default=True, type=int, help="Token validity window in days.")
 @click.option(
     "--token-store",
     default="server_tokens.yaml",
     show_default=True,
     help="Path to the token store YAML file.",
 )
-def token_create(role: str, description: str, token_store: str) -> None:
+def token_create(role: str, description: str, expires_days: int, token_store: str) -> None:
     """Create a new access token and append it to the token store."""
     path = Path(token_store)
 
     raw = secrets.token_hex(24)
     new_token = f"tok_{raw}"
-    entry: dict = {"token": new_token, "role": role, "enabled": True}
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=expires_days)).isoformat().replace("+00:00", "Z")
+    entry: dict = {
+        "token_id": f"tid_{secrets.token_hex(8)}",
+        "token_hash": TokenStore.hash_token(new_token),
+        "role": role,
+        "enabled": True,
+        "expires_at": expires_at,
+    }
     if description:
         entry["description"] = description
 
@@ -116,6 +126,7 @@ def token_create(role: str, description: str, token_store: str) -> None:
 
     click.echo(f"Token created  : {new_token}")
     click.echo(f"Role           : {role}")
+    click.echo(f"Expires at     : {expires_at}")
     if description:
         click.echo(f"Description    : {description}")
     click.echo(f"Store          : {path}")
@@ -142,27 +153,27 @@ def token_list(token_store: str) -> None:
         click.echo("No tokens configured.")
         return
 
-    header = f"{'TOKEN (masked)':<32} {'ROLE':<10} {'STATUS':<10} DESCRIPTION"
+    header = f"{'TOKEN REF':<20} {'ROLE':<10} {'STATUS':<10} {'EXPIRES':<24} DESCRIPTION"
     click.echo(header)
     click.echo("-" * len(header))
     for t in tokens:
-        tok: str = t["token"]
-        masked = (tok[:10] + "…" + tok[-4:]) if len(tok) > 14 else tok
+        token_ref = t.get("token_id") or (t.get("token_hash", "")[:12] + "…")
         status = "enabled" if t.get("enabled", True) else "disabled"
         desc = t.get("description", "")
-        click.echo(f"{masked:<32} {t['role']:<10} {status:<10} {desc}")
+        expires = t.get("expires_at", "never")
+        click.echo(f"{token_ref:<20} {t['role']:<10} {status:<10} {expires:<24} {desc}")
 
 
 @token_group.command("revoke")
-@click.argument("token_prefix")
+@click.argument("token_ref")
 @click.option(
     "--token-store",
     default="server_tokens.yaml",
     show_default=True,
     help="Path to the token store YAML file.",
 )
-def token_revoke(token_prefix: str, token_store: str) -> None:
-    """Disable all tokens whose value starts with TOKEN_PREFIX."""
+def token_revoke(token_ref: str, token_store: str) -> None:
+    """Disable all tokens whose token_id or hash-prefix matches TOKEN_REF."""
     path = Path(token_store)
     if not path.exists():
         click.echo("Token store not found.", err=True)
@@ -172,14 +183,20 @@ def token_revoke(token_prefix: str, token_store: str) -> None:
         data = yaml.safe_load(fh) or {}
     tokens = data.get("tokens", [])
 
-    matched = [t for t in tokens if t["token"].startswith(token_prefix)]
+    matched = [
+        t for t in tokens
+        if str(t.get("token_id", "")).startswith(token_ref)
+        or str(t.get("token_hash", "")).startswith(token_ref)
+        or str(t.get("token", "")).startswith(token_ref)
+    ]
     if not matched:
-        click.echo(f"No token found with prefix '{token_prefix}'.", err=True)
+        click.echo(f"No token found with reference '{token_ref}'.", err=True)
         raise SystemExit(1)
 
     for t in matched:
         t["enabled"] = False
-        click.echo(f"Revoked: {t['token'][:10]}…")
+        marker = t.get("token_id") or (str(t.get("token_hash", ""))[:12] + "…")
+        click.echo(f"Revoked: {marker}")
 
     with open(path, "w") as fh:
         yaml.dump(data, fh, default_flow_style=False, allow_unicode=True)

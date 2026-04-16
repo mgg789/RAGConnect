@@ -13,14 +13,18 @@
 #   write     — search + write / insert access
 
 tokens:
-  - token: tok_replace_me_readonly_abc123def456789
+  - token_id: tid_readonly_01
+    token_hash: sha256_replace_me_readonly
     role: readonly
     enabled: true
+    expires_at: "2027-01-01T00:00:00Z"
     description: "User Alice — readonly access"
 
-  - token: tok_replace_me_write_xyz789ghi012345678
+  - token_id: tid_write_01
+    token_hash: sha256_replace_me_write
     role: write
     enabled: true
+    expires_at: "2027-01-01T00:00:00Z"
     description: "User Bob — write access"
 
   # Disabled token example (will be rejected by the server):

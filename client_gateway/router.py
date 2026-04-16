@@ -8,6 +8,7 @@ from shared import errors
 from shared.lightrag_client import LightRAGClient
 from shared.models import (
     ErrorInfo,
+    ResultSource,
     SearchResponse,
     SearchResult,
     WarningInfo,
@@ -65,13 +66,32 @@ class Router:
         effective_label = project_label or self.config.default_project
 
         if not effective_label:
+            if self.config.remote_only_mode:
+                return SearchResponse(
+                    status="error",
+                    error=ErrorInfo(
+                        code=errors.ERROR_REMOTE_ONLY_MODE,
+                        message=(
+                            "No project_label provided while remote_only_mode is enabled. "
+                            "Set project_label or configure default_project."
+                        ),
+                    ),
+                )
             return await self._search_native(query)
 
         dest = find_project(self.config, effective_label)
         if dest:
             return await self._search_via_gateway(query, dest)
 
-        # Label given but not found → local + warning
+        if self.config.strict_project_routing:
+            return SearchResponse(
+                status="error",
+                error=ErrorInfo(
+                    code=errors.ERROR_PROJECT_NOT_CONFIGURED,
+                    message=f"Project '{effective_label}' not found in configuration.",
+                ),
+            )
+
         result = await self._search_native(query)
         return _attach_warning(
             result,
@@ -79,7 +99,7 @@ class Router:
                 code=errors.WARNING_DESTINATION_NOT_FOUND,
                 message=(
                     f"Project '{effective_label}' not found in configuration. "
-                    "Search executed against local LightRAG."
+                    "Search executed against local LightRAG due to non-strict routing."
                 ),
             ),
         )
@@ -117,7 +137,11 @@ class Router:
             status_code, data = await client.search(query)
             if status_code == 200 and data.get("status") == "ok":
                 results = [
-                    SearchResult(**r) if isinstance(r, dict) else SearchResult(text=str(r))
+                    SearchResult(
+                        **{**r, "source": ResultSource.project}
+                    )
+                    if isinstance(r, dict)
+                    else SearchResult(text=str(r), source=ResultSource.project)
                     for r in data.get("results", [])
                 ]
                 return SearchResponse(status="ok", source="project", results=results)
@@ -138,6 +162,15 @@ class Router:
                 ),
             )
 
+        if self.config.remote_only_mode:
+            return SearchResponse(
+                status="error",
+                error=ErrorInfo(
+                    code=errors.ERROR_PROJECT_DESTINATION_UNAVAILABLE,
+                    message=warning.message if warning else "Project destination unavailable.",
+                ),
+            )
+
         result = await self._search_native(query)
         return _attach_warning(result, warning)
 
@@ -152,6 +185,17 @@ class Router:
         effective_label = project_label or self.config.default_project
 
         if not effective_label:
+            if self.config.remote_only_mode:
+                return WriteResponse(
+                    status="error",
+                    error=ErrorInfo(
+                        code=errors.ERROR_REMOTE_ONLY_MODE,
+                        message=(
+                            "No project_label provided while remote_only_mode is enabled. "
+                            "Set project_label or configure default_project."
+                        ),
+                    ),
+                )
             return await self._write_native(text)
 
         dest = find_project(self.config, effective_label)

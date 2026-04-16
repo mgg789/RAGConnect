@@ -44,3 +44,33 @@ class ServerGatewayClient:
                 return response.status_code == 200
         except Exception:
             return False
+
+    async def documents(self) -> Tuple[int, dict]:
+        return await self._get("/documents")
+
+    async def entities(self) -> Tuple[int, dict]:
+        return await self._get("/entities")
+
+    async def relations(self) -> Tuple[int, dict]:
+        return await self._get("/relations")
+
+    async def graph(self) -> Tuple[int, dict]:
+        return await self._get("/graph")
+
+    async def ingest(self, texts: list[str]) -> Tuple[int, dict]:
+        return await self._post("/ingest", {"texts": texts})
+
+    async def rebuild(self) -> Tuple[int, dict]:
+        return await self._post("/rebuild", {})
+
+    async def _get(self, path: str) -> Tuple[int, dict]:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.get(f"{self.base_url}{path}", headers=self._headers)
+            payload = response.json() if response.content else {}
+            return response.status_code, payload
+
+    async def _post(self, path: str, payload: dict) -> Tuple[int, dict]:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(f"{self.base_url}{path}", json=payload, headers=self._headers)
+            data = response.json() if response.content else {}
+            return response.status_code, data

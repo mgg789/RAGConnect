@@ -29,10 +29,13 @@ services:
       - lightrag_data:/data/lightrag
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
-      # Optional overrides:
-      # OPENAI_API_BASE: ${OPENAI_API_BASE:-https://api.openai.com/v1}
-      # LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
-      # EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      OPENAI_API_BASE: ${OPENAI_API_BASE:-https://api.openai.com/v1}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      NEO4J_URI: ${NEO4J_URI:-}
+      NEO4J_USERNAME: ${NEO4J_USERNAME:-}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
+      NEO4J_DATABASE: ${NEO4J_DATABASE:-neo4j}
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; urllib.request.urlopen('http://localhost:9621/health')"]
@@ -40,10 +43,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-    # Expose only if you need direct LightRAG access from outside Docker.
-    # Remove this block in production.
-    ports:
-      - "9621:9621"
+    # LightRAG is internal-only in production deployments.
 
   # --------------------------------------------------------------------------
   # Server Gateway — token auth + LightRAG proxy
@@ -63,6 +63,8 @@ services:
     environment:
       LIGHTRAG_URL: http://lightrag:9621
       TOKEN_STORE_PATH: /data/server_tokens.yaml
+      RAGCONNECT_ADMIN_USERNAME: ${RAGCONNECT_ADMIN_USERNAME:-admin}
+      RAGCONNECT_ADMIN_PASSWORD: ${RAGCONNECT_ADMIN_PASSWORD}
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]

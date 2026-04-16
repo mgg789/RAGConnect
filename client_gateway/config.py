@@ -23,6 +23,9 @@ class DestinationConfig(BaseModel):
     label: Optional[str] = None   # absent → local (no-auth, native API)
     token: Optional[str] = None   # absent → no auth needed
     enabled: bool = True
+    display_name: Optional[str] = None
+    prefer_for_search: bool = False
+    allow_local_search_augmentation: bool = False
 
     @property
     def is_local(self) -> bool:
@@ -37,6 +40,8 @@ class DestinationConfig(BaseModel):
 class ClientConfig(BaseModel):
     destinations: List[DestinationConfig] = []
     default_project: Optional[str] = None
+    remote_only_mode: bool = False
+    strict_project_routing: bool = True
 
 
 # ---------------------------------------------------------------------------

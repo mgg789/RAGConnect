@@ -1,0 +1,10 @@
+# RAGConnect memory settings for this repository
+
+memory-label = "LABEL_HERE"
+
+## Memory policy
+
+- For project knowledge, always pass `project_label="LABEL_HERE"` to memory tools.
+- For personal notes and cross-project context, omit `project_label` to use local memory.
+- Run `memory_search` before answering questions about architecture, decisions, or project history.
+- Run `memory_write` after important decisions, constraints, discoveries, and milestones.
