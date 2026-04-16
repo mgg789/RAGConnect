@@ -1,55 +1,16 @@
-# Memory configuration for this project
-#
-# Copy this file to your project root as CLAUDE.md (or append to an existing one).
-# Claude Code reads CLAUDE.md at startup and follows these instructions automatically.
-# Replace LABEL_HERE with the project label you configured in ragconnect-web.
+﻿# Сниппет проектной памяти
 
-## Memory
+Скопируй этот блок в корневой `AGENTS.md` или `CLAUDE.md` проекта, который должен использовать проектную память.
+Замени `LABEL_HERE` на реальный label проекта.
 
-This project uses RAGConnect for persistent memory.
-Memory label: **`LABEL_HERE`**
+memory-label = "LABEL_HERE"
 
-### When to read from memory
+## Правила работы с памятью RAGConnect
 
-Before answering any question about:
-- architecture or design decisions
-- past agreements or constraints
-- the current state of a feature or component
-- why something was done a particular way
+Этот проект использует RAGConnect как рабочую память агента.
+Пользуйся памятью проактивно.
 
-Always call `memory_search` with `project_label="LABEL_HERE"` (derived from `memory-label`) before answering, even if
-you think you already know. Memory may contain more recent information than your training.
-
-### When to write to memory
-
-Immediately after any of the following:
-- a design or architectural decision is made
-- an approach is agreed upon or rejected (and why)
-- an important constraint or dependency is discovered
-- a bug root cause is identified
-- a non-obvious implementation detail is explained
-- a task or milestone is completed
-
-Use `memory_write` with `project_label="LABEL_HERE"`.
-Write in third-person past tense, factually, without filler.
-
-Good example:
-> "Decided to use async LightRAG client because the sync version blocks the event loop
->  under concurrent MCP requests. Confirmed 2025-04-16."
-
-Bad example:
-> "We talked about making it async and that seems like a good idea."
-
-### When to use local memory instead
-
-Use `memory_search` / `memory_write` **without** a project_label (routes to local memory) for:
-- personal notes that are not relevant to the team
-- cross-project observations
-- temporary scratch notes
-
-### Routing reference
-
-| Situation | project_label |
-|-----------|--------------|
-| Working in this project (`memory-label`) | `LABEL_HERE` |
-| Personal / cross-project notes | *(omit)* |
+- Перед ответами на вопросы по проекту сначала делай `memory_search` с `project_label="LABEL_HERE"`.
+- После решений, важных находок, root cause багов и завершённых этапов делай `memory_write` с `project_label="LABEL_HERE"`.
+- Локальную память без `project_label` используй только для личных заметок или кросс-проектных заметок.
+- Не отвечай по чувствительным к памяти темам, не проверив память заранее.

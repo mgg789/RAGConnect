@@ -1,10 +1,16 @@
-# RAGConnect memory settings for this repository
+﻿# Сниппет проектной памяти
+
+Скопируй этот блок в корневой `AGENTS.md` или `CLAUDE.md` проекта, который должен использовать проектную память.
+Замени `LABEL_HERE` на реальный label проекта.
 
 memory-label = "LABEL_HERE"
 
-## Memory policy
+## Правила работы с памятью RAGConnect
 
-- For project knowledge, always pass `project_label="LABEL_HERE"` to memory tools.
-- For personal notes and cross-project context, omit `project_label` to use local memory.
-- Run `memory_search` before answering questions about architecture, decisions, or project history.
-- Run `memory_write` after important decisions, constraints, discoveries, and milestones.
+Этот проект использует RAGConnect как рабочую память агента.
+Пользуйся памятью проактивно.
+
+- Перед ответами на вопросы по проекту сначала делай `memory_search` с `project_label="LABEL_HERE"`.
+- После решений, важных находок, root cause багов и завершённых этапов делай `memory_write` с `project_label="LABEL_HERE"`.
+- Локальную память без `project_label` используй только для личных заметок или кросс-проектных заметок.
+- Не отвечай по чувствительным к памяти темам, не проверив память заранее.

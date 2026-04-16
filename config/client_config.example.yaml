@@ -1,40 +1,19 @@
-# RAGConnect — Client Gateway configuration example
-#
-# Copy to ~/.ragconnect/client_config.yaml  (or set RAGCONNECT_CONFIG_PATH).
-# Edit with:  ragconnect-web  →  http://127.0.0.1:8090
+﻿# RAGConnect client config example.
+# Copy to ~/.ragconnect/client_config.yaml or let the setup scripts create it.
 
 destinations:
-
-  # ---- Local LightRAG (no label, no token) ----
-  # Requests go directly to LightRAG's native API (/query, /insert).
-  # This is the default destination when no project_label is given.
+  # Local memory: default personal long-term memory.
   - url: http://127.0.0.1:9621
+    display_name: Local memory
     enabled: true
 
-  # ---- Project destinations (label + token required) ----
-  # Requests are proxied through the project's Server Gateway with Bearer auth.
-  - label: kettle
-    display_name: Kettle Project
-    url: https://kettle-memory.example.com
-    token: tok_kettle_user_01_replace_me
+  # Project memory: shared team memory selected by project_label.
+  - label: your-project
+    display_name: Your Project
+    url: https://your-memory.example.com
+    token: tok_replace_me
     enabled: true
-    prefer_for_search: true
-    allow_local_search_augmentation: true
 
-  - label: edu
-    display_name: Education Platform
-    url: https://edu-memory.example.com
-    token: tok_edu_user_01_replace_me
-    enabled: true
-    prefer_for_search: false
-    allow_local_search_augmentation: false
-
-# Optional: when set, memory operations with no explicit project_label route here
-# instead of the local LightRAG.
-# default_project: kettle
-
-# Optional: force project-only mode when local LightRAG is not used.
-# remote_only_mode: true
-
-# Optional: if true, unknown project labels return an error instead of local fallback.
-# strict_project_routing: true
+default_project: null
+remote_only_mode: false
+strict_project_routing: false

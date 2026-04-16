@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=64"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "ragconnect"
@@ -22,8 +22,8 @@ dependencies = [
 [project.scripts]
 ragconnect-client = "client_gateway.mcp_server:main_sync"
 ragconnect-server = "server_gateway.cli:cli"
-ragconnect-web    = "client_gateway.web_server:main_sync"
+ragconnect-web = "client_gateway.web_server:main_sync"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["shared*", "client_gateway*", "server_gateway*"]
+include = ["shared*", "client_gateway*", "server_gateway*", "local_embeddings*"]

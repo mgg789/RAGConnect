@@ -1,82 +1,94 @@
-# RAGConnect Agent Bootstrap Rules
-If user tell `Create my own memory here` help him create LightRAG memory with gateways (this is instruction for you)
+﻿# Правила bootstrap для памяти RAGConnect
 
-These rules tell any coding agent how to initialize memory for this project.
+Эти инструкции намеренно одинаковые для `AGENTS.md` и `CLAUDE.md`.
+Их цель: собрать у пользователя конфигурацию обычным языком, настроить память без требования открывать терминал и затем пользоваться этой памятью как рабочей долговременной памятью агента.
 
-## Goal
+## Цель
 
-Use RAGConnect memory correctly:
-- Local memory is default for personal knowledge (no label).
-- Project memory is used when `project_label` is provided.
-- For this repository, project memory label is:
+Используй RAGConnect как реальную рабочую память, а не как необязательный инструмент.
+
+- Локальная память это личная память по умолчанию.
+- Проектная память выбирается по `project_label`.
+- Для конкретного проекта label задаётся так:
 
 memory-label = "LABEL_HERE"
 
-## Startup protocol (must follow)
+## Обязательный порядок вопросов
 
-Before running memory commands, the agent must ask the user configuration questions in the exact order below.
-Do not skip questions, and do not assume defaults without explicit confirmation.
+Перед изменением настроек памяти, установкой MCP, включением автозапуска или деплоем сервера задай пользователю вопросы в этом точном порядке и на языке пользователя.
+Не пропускай вопросы. Не подставляй значения молча.
 
-### Step 1: detect runtime mode (on user's language)
+1. Нужна только локальная настройка или ещё и проектная память на собственном сервере?
+2. Если нужен сервер, дай SSH-параметры: host, port, username и способ аутентификации.
+3. Установлен ли Docker и доступен ли он сейчас на этой машине?
+4. Если нужен сервер, дай sudo-пароль или подтверди passwordless sudo.
+5. Есть ли уже домен для сервера? Если да, какой?
+6. Если домен есть, подтверждены ли уже DNS A/AAAA записи на IP сервера?
+7. Какой Git URL использовать на сервере?
+8. Какую ветку или тег нужно развернуть?
+9. Где хранится `OPENAI_API_KEY`: в окружении, в `.env`, или его нужно записать сейчас?
+10. Используется дефолтный OpenAI endpoint или OpenAI-compatible endpoint?
+11. Если используется совместимый endpoint, какой `OPENAI_API_BASE`?
+12. Нужны ли кастомные `LLM_MODEL` и `EMBEDDING_MODEL`? Если да, попроси оба значения.
+13. Нужна локальная память, удалённая проектная память или обе?
+14. Если используется проектная память, какой `memory-label` нужен этому репозиторию?
+15. Если используется проектная память, какой URL у Server Gateway?
+16. Если используется проектная память, какой access token `tok_...` нужен?
+17. Должны ли запросы без label идти в локальную память?
+18. Нужен ли `remote_only_mode=true`?
+19. Нужна ли строгая маршрутизация без fallback, если label неверный или проектная память недоступна?
+20. Нужно ли автоматически настроить MCP для Codex, Claude Desktop или обоих?
+21. Нужно ли автоматически запускать локальную память при входе в систему?
 
-You must ask:
-1. "Do you want only a local setup (connect to existing projects), or do you also want to deploy project memory on your own server?"
-2. "If server deployment is needed, please provide SSH connection details (host, port, username, authentication method: password or key file)."
-3. "Is Docker installed and available on this machine right now?"
-4. "If server deployment is needed, please provide the server sudo password (or confirm passwordless sudo)."
-5. "Do you already have a domain for this server? If yes, provide the domain name."
-6. "If domain is provided, please create and confirm DNS records now (A/AAAA to server IP)."
-7. "What Git repository URL should be used on the server to clone RAGConnect?"
-8. "Which branch or tag should be deployed on the server?"
-
-If user is unsure, the agent may run checks and report result:
+Если пользователь не уверен насчёт Docker, можно проверить:
 - `docker --version`
 - `docker compose version`
 
-### Step 2: collect required configuration (on user's language)
+## Делай всё сам, без консоли для пользователя
 
-You must ask:
-9. "What is your `OPENAI_API_KEY` source? (already in environment / set in .env / provide now manually)"
-10. "Do you use default OpenAI endpoint or an OpenAI-compatible URL?"
-11. "If compatible URL is used, what is `OPENAI_API_BASE`?"
-12. "Do you want custom `LLM_MODEL` and `EMBEDDING_MODEL` values? If yes, provide both."
-13. "Will you use local personal memory, remote project memory, or both?"
-14. "If remote project memory is used, what is the project label (`memory-label`) for this repository?"
-15. "If remote project memory is used, what is the Server Gateway URL?"
-16. "If remote project memory is used, what is the access token (`tok_...`)?"
-17. "Should requests without label go to local memory? (yes/no)"
-18. "Do you want `remote_only_mode=true`? (yes/no)"
-19. "Do you want strict routing (no fallback when project label is wrong/unavailable)? (yes/no)"
+Если задачу можно выполнить самим агентом, не проси пользователя вручную открывать терминал, копировать команды или редактировать конфиги.
+Агент должен делать настройку сам.
 
-### Step 3: apply and verify
+### Локальная настройка на Windows
 
-After answers are collected, the agent must:
-1. If server deployment is requested:
-   - connect via SSH;
-   - install Docker + Docker Compose if missing;
-   - clone repository from the provided Git URL and checkout the requested branch/tag;
-   - create `.env` from `.env.example` and fill required values;
-   - run `docker compose up -d`;
-   - generate project token and report only masked form back to user;
-   - if domain is provided, verify DNS resolves to server IP before exposing the endpoint.
-2. Configure destination(s) in `ragconnect-web`.
-3. Start `ragconnect-client`.
-4. Run health checks.
-5. Confirm routing behavior:
-   - without `project_label` -> local memory (unless remote-only mode)
-   - with `project_label="LABEL_HERE"` -> project memory
+Для Windows используй скрипты репозитория:
+- `scripts/windows/install-local-stack.ps1`
+- `scripts/windows/install-codex-mcp.ps1`
+- `scripts/windows/install-claude-mcp.ps1`
+- `scripts/windows/install-autostart.ps1`
+- `scripts/windows/uninstall-autostart.ps1`
+- `scripts/windows/start-local-stack.ps1`
+- `scripts/windows/stop-local-stack.ps1`
 
-### Step 4: memory usage behavior
+Если пользователь ответил "да" на автозапуск, включи его автоматически.
+Если пользователь ответил "да" на MCP для Codex или Claude Desktop, измени эти конфиги автоматически.
 
-For project work in this repo:
-- Always search with `project_label="LABEL_HERE"` before answering architecture/history questions.
-- Always write project decisions with `project_label="LABEL_HERE"`.
+### Деплой сервера
 
-For personal notes:
-- Omit `project_label`.
+Если пользователь просит серверный деплой, агент обязан:
+1. Подключиться по SSH.
+2. Установить Docker и Docker Compose, если их нет.
+3. Склонировать нужный репозиторий и переключиться на нужную ветку или тег.
+4. Создать `.env` из `.env.example` и заполнить обязательные значения.
+5. Запустить `docker compose up -d`.
+6. Создать проектный токен и вернуть пользователю только замаскированный вид.
+7. Если используется домен, проверить DNS до публикации endpoint.
+8. После деплоя проверить `/health`, `write` и `search`.
 
-## Safety rules
+## Как пользоваться памятью после настройки
 
-- Never print secrets (API keys, tokens) back in plain text.
-- If a required value is missing, ask the user before proceeding.
-- If Docker mode is requested but Docker is unavailable, fall back to local mode only after user confirmation.
+Считай память своей внешней долговременной памятью.
+
+- Перед ответами про архитектуру, историю решений, ограничения, баги, прошлую работу и договорённости сначала делай `memory_search`.
+- После решений, важных находок, root cause, уточнений требований и завершённых этапов делай `memory_write`.
+- Для проектной работы всегда используй `project_label="LABEL_HERE"`.
+- Для личных заметок и кросс-проектных заметок не передавай `project_label` и используй локальную память.
+- Никогда молча не игнорируй ошибки записи в память.
+- Если ответ уже есть в памяти, используй его.
+
+## Правила безопасности
+
+- Никогда не печатай API keys, токены и пароли в открытом виде.
+- Маскируй секреты в логах и в отчётах.
+- Если обязательного значения не хватает, сначала спроси пользователя.
+- Если пользователь просит Docker-режим, а Docker недоступен, переходи в local-only режим только после подтверждения пользователя.

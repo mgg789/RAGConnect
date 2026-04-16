@@ -1,39 +1,28 @@
-# syntax=docker/dockerfile:1
-#
-# Minimal LightRAG API server image.
-#
-# LightRAG requires an LLM backend (OpenAI-compatible API).
-# Pass your key via the OPENAI_API_KEY environment variable
-# or mount a custom config if your backend differs.
-#
-# Supported extra env vars (passed straight to LightRAG):
-#   OPENAI_API_BASE  — override the API base URL (e.g. for local models)
-#   LLM_MODEL        — model name (default: gpt-4o-mini)
-#   EMBEDDING_MODEL  — embedding model (default: text-embedding-3-small)
-#   NEO4J_URI        — recommended production graph backend endpoint
-#   NEO4J_USERNAME   — Neo4j username
-#   NEO4J_PASSWORD   — Neo4j password
-#   NEO4J_DATABASE   — Neo4j database name
-
+﻿# syntax=docker/dockerfile:1
 FROM python:3.11-slim
 
-# lightrag-hku[api] pulls FastAPI, uvicorn, and all LightRAG deps
-RUN pip install --no-cache-dir "lightrag-hku[api]>=1.0.0"
+RUN pip install --no-cache-dir "lightrag-hku[api]>=1.4.14" "sentence-transformers>=3.0.0"
 
-WORKDIR /data
+WORKDIR /app
+
+COPY local_embeddings/ ./local_embeddings/
+COPY lightrag_server/ ./lightrag_server/
+RUN chmod +x /app/lightrag_server/start.sh
 
 VOLUME ["/data/lightrag"]
 
 EXPOSE 9621
 
+ENV PYTHONPATH=/app
 ENV LIGHTRAG_WORKING_DIR=/data/lightrag
+ENV LOCAL_EMBEDDING_MODE=true
+ENV LOCAL_EMBEDDING_MODEL=intfloat/multilingual-e5-small
+ENV LOCAL_EMBEDDING_DIM=384
+ENV EMBEDDING_MODEL=intfloat/multilingual-e5-small
+ENV EMBEDDING_DIM=384
+ENV PROXY_PORT=9622
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9621/health')"
 
-# The lightrag-server entry point is installed by lightrag-hku[api].
-# Adjust --working-dir, --llm-model, and --embedding-model as needed.
-CMD ["lightrag-server", \
-     "--host", "0.0.0.0", \
-     "--port", "9621", \
-     "--working-dir", "/data/lightrag"]
+CMD ["/app/lightrag_server/start.sh"]
