@@ -1,14 +1,18 @@
 # RAGConnect — Client Gateway configuration example
 #
-# Copy this file to ~/.ragconnect/client_config.yaml and fill in real values.
-# Override the path with the RAGCONNECT_CONFIG_PATH environment variable.
-#
-# Each project entry requires:
-#   label  — unique short name used as the project_label in MCP tool calls
-#   url    — base URL of the project's Server Gateway
-#   token  — your personal access token for that project (issued by the project admin)
+# Copy to ~/.ragconnect/client_config.yaml  (or set RAGCONNECT_CONFIG_PATH).
+# Edit with:  ragconnect-web  →  http://127.0.0.1:8090
 
-projects:
+destinations:
+
+  # ---- Local LightRAG (no label, no token) ----
+  # Requests go directly to LightRAG's native API (/query, /insert).
+  # This is the default destination when no project_label is given.
+  - url: http://127.0.0.1:9621
+    enabled: true
+
+  # ---- Project destinations (label + token required) ----
+  # Requests are proxied through the project's Server Gateway with Bearer auth.
   - label: kettle
     url: https://kettle-memory.example.com
     token: tok_kettle_user_01_replace_me
@@ -19,13 +23,6 @@ projects:
     token: tok_edu_user_01_replace_me
     enabled: true
 
-  # Disable a project without removing it:
-  # - label: archived
-  #   url: https://archived-memory.example.com
-  #   token: tok_archived_replace_me
-  #   enabled: false
-
-local_memory:
-  # URL of your local LightRAG instance
-  url: http://127.0.0.1:9621
-  enabled: true
+# Optional: when set, memory operations with no explicit project_label route here
+# instead of the local LightRAG.
+# default_project: kettle

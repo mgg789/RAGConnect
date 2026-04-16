@@ -8,11 +8,8 @@ Run via stdio (the standard MCP transport):
 
 How the AI learns about memory
 -------------------------------
-Two complementary mechanisms:
-
-1. MCP Prompts  — `memory-context` prompt injects a system-level description of
-   available projects and usage rules into the AI's context at session start.
-   Supported automatically by Claude Code and other MCP-aware clients.
+1. MCP Prompts  — `memory-context` prompt injects available destinations and
+   usage rules into the AI context at session start.
 
 2. CLAUDE.md    — Project-level instructions that tell Claude which project_label
    to use when working in a specific repository (see config/CLAUDE.md.example).
@@ -27,9 +24,10 @@ import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from client_gateway.config import load_config
+from client_gateway.config import find_local, load_config
 from client_gateway.router import Router
 from client_gateway.server_client import ServerGatewayClient
+from shared.lightrag_client import LightRAGClient
 from shared.models import HealthResponse, HealthStatus, ListProjectsResponse, ProjectInfo
 
 server = Server("ragconnect-client-gateway")
@@ -46,8 +44,8 @@ async def list_prompts() -> list[types.Prompt]:
             name="memory-context",
             description=(
                 "Injects the current memory configuration into the AI's context: "
-                "available projects, default project, and instructions on when to "
-                "proactively read from / write to memory."
+                "available destinations, default project, and rules for proactive "
+                "memory use."
             ),
             arguments=[],
         )
@@ -60,92 +58,86 @@ async def get_prompt(name: str, arguments: dict | None) -> types.GetPromptResult
         raise ValueError(f"Unknown prompt: {name}")
 
     config = load_config()
-    lines: list[str] = []
+    local = find_local(config)
+    projects = [d for d in config.destinations if not d.is_local]
 
-    lines += [
+    lines: list[str] = [
         "## Memory system",
         "",
         "You have access to a distributed memory system. "
         "Use it to persist and retrieve knowledge across sessions.",
         "",
-        "### Available tools",
-        "| Tool | When to use |",
-        "|------|-------------|",
-        "| `memory_search` | **Before** answering any non-trivial question about a project — retrieve relevant context first. |",
-        "| `memory_write` | **After** any important decision, agreement, design choice, or discovery — store it immediately. |",
-        "| `memory_list_projects` | To discover which project labels are available. |",
-        "| `memory_health` | To check if memory destinations are reachable. |",
+        "### Tools",
+        "| Tool | Purpose |",
+        "|------|---------|",
+        "| `memory_search` | Retrieve context **before** answering questions about a project. |",
+        "| `memory_write`  | Store decisions, agreements, discoveries **immediately** after they occur. |",
+        "| `memory_list_projects` | List available project destinations. |",
+        "| `memory_health` | Check reachability of all destinations. |",
         "",
     ]
 
-    # --- project destinations ---
-    enabled = [p for p in config.projects if p.enabled]
-    disabled = [p for p in config.projects if not p.enabled]
-
-    if enabled:
-        lines.append("### Project destinations (enabled)")
-        for p in enabled:
-            marker = " ← **default**" if p.label == config.default_project else ""
-            lines.append(f"- `{p.label}`{marker}")
-        lines.append("")
-
-    if disabled:
-        lines.append("### Project destinations (disabled)")
-        for p in disabled:
-            lines.append(f"- `{p.label}` *(disabled)*")
-        lines.append("")
-
-    if not config.projects:
+    # --- local destination ---
+    if local:
         lines += [
-            "No project destinations configured yet. "
-            "Run `ragconnect-web` to add one, or edit `~/.ragconnect/client_config.yaml`.",
+            "### Local LightRAG (default when no label given)",
+            f"- URL: `{local.url}`",
+            f"- Status: {'enabled' if local.enabled else 'disabled'}",
+            "- Access: **native API** (no auth, direct LightRAG calls)",
+            "",
+        ]
+    else:
+        lines += [
+            "### Local LightRAG",
+            "- **Not configured.** Add one in `ragconnect-web` to enable local memory.",
             "",
         ]
 
-    # --- default project / routing hint ---
+    # --- project destinations ---
+    if projects:
+        lines.append("### Project destinations")
+        for p in projects:
+            marker = " ← **default**" if p.label == config.default_project else ""
+            status = "enabled" if p.enabled else "disabled"
+            lines.append(f"- `{p.label}` ({status}){marker}")
+        lines.append("")
+    else:
+        lines += ["### Project destinations", "- None configured.", ""]
+
+    # --- routing hint ---
     if config.default_project:
         lines += [
             f"### Default project: `{config.default_project}`",
-            "",
-            f"When no `project_label` is specified in the tool call, "
-            f"memory operations are automatically routed to **`{config.default_project}`**. "
-            "You can omit the label for the default project.",
+            f"When no `project_label` is given, requests route to **`{config.default_project}`** "
+            "(via Server Gateway). Omit the label for the default project.",
             "",
         ]
     else:
         lines += [
             "### Routing",
-            "",
-            "No default project is set. "
-            "Omitting `project_label` routes to **local memory**. "
-            "Always pass an explicit `project_label` to write to a project destination.",
+            "No default project set. Omitting `project_label` routes to the **local LightRAG** "
+            "(native API, no auth).",
             "",
         ]
 
-    # --- behavioural rules ---
+    # --- rules ---
     lines += [
         "### Rules",
-        "",
-        "- Always search memory **before** answering questions about architecture, "
-        "decisions, or past work — even if you think you know the answer.",
-        "- Write to memory **immediately** after: team decisions, architectural choices, "
-        "resolved issues, discovered constraints, and any information that should survive "
-        "beyond this session.",
-        "- Use the project label that matches the current working context. "
-        "If unsure, call `memory_list_projects` to see what is available.",
+        "- **Always search** before answering questions about architecture, decisions, or past work.",
+        "- **Always write** after: design decisions, agreed constraints, discovered issues, "
+        "completed milestones.",
+        "- Use the project label that matches your current working context.",
         "- For personal notes or cross-project observations, omit `project_label` "
-        "(routes to local memory).",
-        "- Never silently skip writing — if a destination fails, report the error "
-        "rather than dropping the information.",
+        "(goes to local LightRAG).",
+        "- Never silently skip writing — report the error rather than dropping information.",
     ]
 
-    text = "\n".join(lines)
     return types.GetPromptResult(
         description="Memory system context and usage rules",
         messages=[
             types.PromptMessage(
                 role="user",
-                content=types.TextContent(type="text", text=text),
+                content=types.TextContent(type="text", text="\n".join(lines)),
             )
         ],
     )
@@ -158,29 +150,26 @@ async def get_prompt(name: str, arguments: dict | None) -> types.GetPromptResult
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
     config = load_config()
-    default_hint = (
-        f" If omitted, routes to the default project ('{config.default_project}')."
-        if config.default_project
-        else " If omitted, routes to local memory."
-    )
+    if config.default_project:
+        default_hint = f"If omitted, routes to the default project ('{config.default_project}')."
+    else:
+        default_hint = "If omitted, routes to the local LightRAG (native API, no auth)."
+
     return [
         types.Tool(
             name="memory_search",
             description=(
                 "Search memory for relevant information. "
-                f"Specify project_label to search a specific project.{default_hint} "
-                "Falls back to local memory with a warning if the destination is unreachable."
+                f"Specify project_label for a project destination. {default_hint} "
+                "Falls back to local LightRAG with a warning if the project is unreachable."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query.",
-                    },
+                    "query": {"type": "string", "description": "The search query."},
                     "project_label": {
                         "type": "string",
-                        "description": "Project label to search. " + default_hint,
+                        "description": f"Project label. {default_hint}",
                     },
                 },
                 "required": ["query"],
@@ -190,25 +179,22 @@ async def list_tools() -> list[types.Tool]:
             name="memory_write",
             description=(
                 "Write information to memory. "
-                f"Specify project_label to write to a specific project.{default_hint} "
-                "By default, write failures do NOT silently fall back to local memory."
+                f"Specify project_label for a project destination. {default_hint} "
+                "Write failures do NOT silently fall back to local."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "text": {
-                        "type": "string",
-                        "description": "The text to store in memory.",
-                    },
+                    "text": {"type": "string", "description": "The text to store."},
                     "project_label": {
                         "type": "string",
-                        "description": "Project label to write to. " + default_hint,
+                        "description": f"Project label. {default_hint}",
                     },
                     "allow_local_fallback_for_write": {
                         "type": "boolean",
                         "description": (
-                            "When true, allows writing to local memory if the "
-                            "project write fails. Default: false."
+                            "Allow writing to local LightRAG if the project write fails. "
+                            "Default: false."
                         ),
                         "default": False,
                     },
@@ -218,25 +204,13 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="memory_list_projects",
-            description=(
-                "List all memory projects configured in the local client config, "
-                "including which one is the default."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {},
-            },
+            description="List all memory destinations (local + projects) from the client config.",
+            inputSchema={"type": "object", "properties": {}},
         ),
         types.Tool(
             name="memory_health",
-            description=(
-                "Check the health of the memory system: "
-                "the Client Gateway itself, local memory, and all configured project destinations."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {},
-            },
+            description="Check reachability of all memory destinations.",
+            inputSchema={"type": "object", "properties": {}},
         ),
     ]
 
@@ -251,8 +225,7 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.Content]:
 
     if name == "memory_search":
         config = load_config()
-        router = Router(config)
-        response = await router.search(
+        response = await Router(config).search(
             query=args.get("query", ""),
             project_label=args.get("project_label"),
         )
@@ -260,8 +233,7 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.Content]:
 
     if name == "memory_write":
         config = load_config()
-        router = Router(config)
-        response = await router.write(
+        response = await Router(config).write(
             text=args.get("text", ""),
             project_label=args.get("project_label"),
             allow_local_fallback=args.get("allow_local_fallback_for_write", False),
@@ -270,12 +242,16 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.Content]:
 
     if name == "memory_list_projects":
         config = load_config()
-        projects = [
-            ProjectInfo(label=p.label, enabled=p.enabled)
-            for p in config.projects
-        ]
-        payload = ListProjectsResponse(projects=projects).model_dump()
-        payload["default_project"] = config.default_project
+        local = find_local(config)
+        payload = {
+            "local": {"url": local.url, "enabled": local.enabled} if local else None,
+            "projects": [
+                ProjectInfo(label=d.label, enabled=d.enabled).model_dump()
+                for d in config.destinations
+                if not d.is_local
+            ],
+            "default_project": config.default_project,
+        }
         return [types.TextContent(type="text", text=_dump(payload))]
 
     if name == "memory_health":
@@ -285,47 +261,34 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.Content]:
             HealthStatus(name="client_gateway", status="ok")
         ]
 
-        # Local memory
-        if config.local_memory.enabled and router.local_client:
-            ok = await router.local_client.health()
-            components.append(
-                HealthStatus(
-                    name="local_memory",
-                    status="ok" if ok else "error",
-                    message=None if ok else "LightRAG not responding.",
-                )
-            )
+        # Local LightRAG — native health check
+        local = find_local(config)
+        if local and local.enabled:
+            ok = await LightRAGClient(local.url).health()
+            components.append(HealthStatus(
+                name="local_lightrag",
+                status="ok" if ok else "error",
+                message=None if ok else f"LightRAG at {local.url} not responding.",
+            ))
         else:
-            components.append(HealthStatus(name="local_memory", status="disabled"))
+            components.append(HealthStatus(name="local_lightrag", status="disabled"))
 
-        # Project destinations
-        for project in config.projects:
-            if not project.enabled:
-                components.append(
-                    HealthStatus(name=f"project:{project.label}", status="disabled")
-                )
+        # Project destinations — health via Server Gateway
+        for dest in config.destinations:
+            if dest.is_local:
                 continue
-            client = ServerGatewayClient(project.url, project.token)
-            ok = await client.health()
-            components.append(
-                HealthStatus(
-                    name=f"project:{project.label}",
-                    status="ok" if ok else "error",
-                )
-            )
+            if not dest.enabled:
+                components.append(HealthStatus(name=f"project:{dest.label}", status="disabled"))
+                continue
+            ok = await ServerGatewayClient(dest.url, dest.token or "").health()
+            components.append(HealthStatus(
+                name=f"project:{dest.label}",
+                status="ok" if ok else "error",
+            ))
 
-        overall = (
-            "ok"
-            if all(c.status in ("ok", "disabled") for c in components)
-            else "error"
-        )
+        overall = "ok" if all(c.status in ("ok", "disabled") for c in components) else "error"
         response = HealthResponse(status=overall, components=components)
-        return [
-            types.TextContent(
-                type="text",
-                text=_dump(response.model_dump(exclude_none=True)),
-            )
-        ]
+        return [types.TextContent(type="text", text=_dump(response.model_dump(exclude_none=True)))]
 
     raise ValueError(f"Unknown tool: {name}")
 

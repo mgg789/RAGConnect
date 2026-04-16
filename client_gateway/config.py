@@ -8,27 +8,41 @@ import yaml
 from pydantic import BaseModel
 
 
-class ProjectConfig(BaseModel):
-    label: str
+class DestinationConfig(BaseModel):
+    """A single memory destination.
+
+    Two kinds:
+    - Local LightRAG  — label is None/empty, token is None.
+                        Requests bypass Server Gateway and go directly to
+                        LightRAG's native HTTP API (/query, /insert).
+    - Project server  — label and token are both set.
+                        Requests are proxied through the Server Gateway with
+                        Bearer-token authentication.
+    """
     url: str
-    token: str
+    label: Optional[str] = None   # absent → local (no-auth, native API)
+    token: Optional[str] = None   # absent → no auth needed
     enabled: bool = True
 
+    @property
+    def is_local(self) -> bool:
+        return not self.label
 
-class LocalMemoryConfig(BaseModel):
-    url: str = "http://127.0.0.1:9621"
-    enabled: bool = True
+    @property
+    def identifier(self) -> str:
+        """Short name used in API routes and log messages."""
+        return self.label or "local"
 
 
 class ClientConfig(BaseModel):
-    projects: List[ProjectConfig] = []
-    local_memory: LocalMemoryConfig = LocalMemoryConfig()
-    # When set, memory operations with no explicit project_label are routed here
-    # instead of local memory. The AI will see this in its MCP prompt context.
+    destinations: List[DestinationConfig] = []
     default_project: Optional[str] = None
 
 
-# Default config path: $RAGCONNECT_CONFIG_PATH or ~/.ragconnect/client_config.yaml
+# ---------------------------------------------------------------------------
+# Config I/O
+# ---------------------------------------------------------------------------
+
 def _default_path() -> Path:
     env = os.environ.get("RAGCONNECT_CONFIG_PATH")
     if env:
@@ -42,11 +56,51 @@ def load_config(config_path: Optional[Path] = None) -> ClientConfig:
         return ClientConfig()
     with open(path) as fh:
         data = yaml.safe_load(fh) or {}
+
+    # ---- migrate legacy format (v0.1: local_memory + projects) ----
+    if "projects" in data or "local_memory" in data:
+        destinations: list = []
+        lm = data.pop("local_memory", None) or {}
+        if lm.get("url"):
+            destinations.append({
+                "url": lm["url"],
+                "enabled": lm.get("enabled", True),
+                # no label, no token → local LightRAG
+            })
+        for p in data.pop("projects", []) or []:
+            destinations.append(p)
+        data["destinations"] = destinations
+
     return ClientConfig(**data)
 
 
-def find_project(config: ClientConfig, label: str) -> Optional[ProjectConfig]:
-    for project in config.projects:
-        if project.label == label and project.enabled:
-            return project
+def save_config(config: ClientConfig, config_path: Optional[Path] = None) -> None:
+    path = config_path or _default_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as fh:
+        yaml.dump(
+            config.model_dump(exclude_none=True),
+            fh,
+            default_flow_style=False,
+            allow_unicode=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Lookup helpers
+# ---------------------------------------------------------------------------
+
+def find_local(config: ClientConfig) -> Optional[DestinationConfig]:
+    """Return the first enabled local (label-less) destination."""
+    for d in config.destinations:
+        if d.is_local and d.enabled:
+            return d
+    return None
+
+
+def find_project(config: ClientConfig, label: str) -> Optional[DestinationConfig]:
+    """Return the first enabled destination with the given label."""
+    for d in config.destinations:
+        if d.label == label and d.enabled:
+            return d
     return None
