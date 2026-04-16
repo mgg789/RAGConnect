@@ -1,6 +1,6 @@
 ﻿## Memory system
 
-You have access to memory. This is not an optional side tool.
+You have access to memory. This is not an optional side tool. You must use it as your long term memory always.
 Treat RAGConnect as your external long-term memory and use it as part of your default workflow.
 
 ### Core behavior

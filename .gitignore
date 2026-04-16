@@ -10,3 +10,6 @@ __pycache__/
 # OS / editor
 Thumbs.db
 .DS_Store
+
+# AI
+/.claude

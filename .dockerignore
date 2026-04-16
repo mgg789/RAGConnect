@@ -14,3 +14,4 @@ build/
 .env
 config/
 client_gateway/
+.claude
