@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1
+#
+# Minimal LightRAG API server image.
+#
+# LightRAG requires an LLM backend (OpenAI-compatible API).
+# Pass your key via the OPENAI_API_KEY environment variable
+# or mount a custom config if your backend differs.
+#
+# Supported extra env vars (passed straight to LightRAG):
+#   OPENAI_API_BASE  — override the API base URL (e.g. for local models)
+#   LLM_MODEL        — model name (default: gpt-4o-mini)
+#   EMBEDDING_MODEL  — embedding model (default: text-embedding-3-small)
+
+FROM python:3.11-slim
+
+# lightrag-hku[api] pulls FastAPI, uvicorn, and all LightRAG deps
+RUN pip install --no-cache-dir "lightrag-hku[api]>=1.0.0"
+
+WORKDIR /data
+
+VOLUME ["/data/lightrag"]
+
+EXPOSE 9621
+
+ENV LIGHTRAG_WORKING_DIR=/data/lightrag
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9621/health')"
+
+# The lightrag-server entry point is installed by lightrag-hku[api].
+# Adjust --working-dir, --llm-model, and --embedding-model as needed.
+CMD ["lightrag-server", \
+     "--host", "0.0.0.0", \
+     "--port", "9621", \
+     "--working-dir", "/data/lightrag"]

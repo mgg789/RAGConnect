@@ -21,6 +21,7 @@ dependencies = [
 [project.scripts]
 ragconnect-client = "client_gateway.mcp_server:main_sync"
 ragconnect-server = "server_gateway.cli:cli"
+ragconnect-web    = "client_gateway.web_server:main_sync"
 
 [tool.setuptools.packages.find]
 where = ["."]
