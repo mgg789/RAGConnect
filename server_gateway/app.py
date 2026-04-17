@@ -16,15 +16,17 @@ import json
 import os
 import secrets
 import time
+import base64
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import yaml
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
 from shared.errors import ERROR_DESTINATION_UNAVAILABLE
@@ -40,7 +42,7 @@ LIGHTRAG_URL: str = os.environ.get("LIGHTRAG_URL", "http://127.0.0.1:9621")
 TOKEN_STORE_PATH: Path = Path(os.environ.get("TOKEN_STORE_PATH", "server_tokens.yaml"))
 
 app = FastAPI(title="RAGConnect Server Gateway")
-_admin_basic = HTTPBasic()
+_admin_basic = HTTPBasic(auto_error=False)
 
 _token_store = TokenStore(TOKEN_STORE_PATH)
 _lightrag = LightRAGClient(LIGHTRAG_URL)
@@ -48,6 +50,9 @@ _lightrag = LightRAGClient(LIGHTRAG_URL)
 # Short-lived page nonces for admin JS calls (avoids Basic-auth-in-fetch issues)
 _admin_nonces: dict[str, float] = {}
 _NONCE_TTL = 1800  # 30 min
+_admin_sessions: dict[str, float] = {}
+_ADMIN_SESSION_TTL = 1800  # 30 min
+_ADMIN_SESSION_COOKIE = "ragconnect_admin_session"
 
 
 def _new_nonce() -> str:
@@ -59,6 +64,20 @@ def _new_nonce() -> str:
 
 def _check_nonce(nonce: str) -> bool:
     exp = _admin_nonces.get(nonce, 0)
+    return exp > time.time()
+
+
+def _new_admin_session() -> str:
+    _admin_sessions.update({k: v for k, v in _admin_sessions.items() if v > time.time()})
+    token = secrets.token_urlsafe(32)
+    _admin_sessions[token] = time.time() + _ADMIN_SESSION_TTL
+    return token
+
+
+def _check_admin_session(token: Optional[str]) -> bool:
+    if not token:
+        return False
+    exp = _admin_sessions.get(token, 0)
     return exp > time.time()
 ADMIN_USERNAME = os.environ.get("RAGCONNECT_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("RAGCONNECT_ADMIN_PASSWORD", "")
@@ -105,9 +124,47 @@ async def _security_headers(request: Request, call_next):
         )
     request_bucket.append(now)
 
-    response = await call_next(request)
+    if request.url.path == "/ui/graph":
+        credentials = _basic_credentials(request.headers.get("authorization"))
+        if credentials is None:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Admin authentication required."},
+                headers={"WWW-Authenticate": 'Basic realm="RAGConnect Admin"'},
+            )
+        try:
+            await _require_admin(request, credentials)
+        except HTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail},
+                headers=exc.headers or {},
+            )
+        response = HTMLResponse(_LIGHTRAG_GRAPH_BOOTSTRAP_HTML)
+        response.set_cookie(
+            key=_ADMIN_SESSION_COOKIE,
+            value=_new_admin_session(),
+            max_age=_ADMIN_SESSION_TTL,
+            httponly=True,
+            samesite="Lax",
+            path="/",
+        )
+    else:
+        response = await call_next(request)
+
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    allow_same_origin_frame = (
+        request.url.path.startswith("/webui")
+        or request.url.path in {
+            "/ui/graph",
+            "/auth-status",
+            "/documents/paginated",
+            "/graph/label/popular",
+            "/graph/label/list",
+            "/graphs",
+        }
+    )
+    response.headers["X-Frame-Options"] = "SAMEORIGIN" if allow_same_origin_frame else "DENY"
     response.headers["Referrer-Policy"] = "same-origin"
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -128,6 +185,69 @@ def _bearer(authorization: Optional[str]) -> Optional[str]:
     if authorization and authorization.startswith("Bearer "):
         return authorization[7:]
     return None
+
+
+def _basic_credentials(authorization: Optional[str]) -> Optional[HTTPBasicCredentials]:
+    if not authorization or not authorization.startswith("Basic "):
+        return None
+    try:
+        raw = base64.b64decode(authorization[6:]).decode("utf-8")
+        username, password = raw.split(":", 1)
+    except Exception:
+        return None
+    return HTTPBasicCredentials(username=username, password=password)
+
+
+_PROXY_RESPONSE_HEADERS = {
+    "cache-control",
+    "content-disposition",
+    "content-type",
+    "etag",
+    "expires",
+    "last-modified",
+    "location",
+    "pragma",
+}
+
+
+async def _proxy_lightrag(request: Request, path: str) -> Response:
+    query = request.url.query
+    target = f"{LIGHTRAG_URL}{path}"
+    if query:
+        target = f"{target}?{query}"
+
+    # Strip hop-by-hop headers and let httpx recalculate payload metadata.
+    forward_headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower() not in {"host", "content-length", "connection"}
+    }
+    body = await request.body()
+
+    async with httpx.AsyncClient(follow_redirects=False, timeout=120.0) as client:
+        upstream = await client.request(
+            request.method,
+            target,
+            headers=forward_headers,
+            content=body if body else None,
+        )
+
+    response_headers = {
+        key: value
+        for key, value in upstream.headers.items()
+        if key.lower() in _PROXY_RESPONSE_HEADERS
+    }
+    location = response_headers.get("location")
+    if location and location.startswith(LIGHTRAG_URL):
+        rewritten = location[len(LIGHTRAG_URL):]
+        response_headers["location"] = rewritten or "/"
+    content = upstream.content
+
+    return Response(
+        content=content,
+        status_code=upstream.status_code,
+        headers=response_headers,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -196,8 +316,17 @@ async def write(
 
 
 @app.get("/health")
-async def health() -> JSONResponse:
+async def health(
+    request: Request,
+    credentials: Optional[HTTPBasicCredentials] = Depends(HTTPBasic(auto_error=False)),
+) -> Response:
     """Liveness / readiness probe."""
+    if _check_admin_session(request.cookies.get(_ADMIN_SESSION_COOKIE)) or credentials is not None:
+        try:
+            await _require_admin(request, credentials)
+            return await _proxy_lightrag(request, "/health")
+        except HTTPException:
+            pass
     lightrag_ok = await _lightrag.health()
     return JSONResponse(content={
         "status": "ok" if lightrag_ok else "error",
@@ -235,10 +364,13 @@ async def ingest(
 
 async def _require_admin(
     request: Request,
-    credentials: HTTPBasicCredentials = Depends(_admin_basic),
+    credentials: Optional[HTTPBasicCredentials] = Depends(_admin_basic),
 ) -> None:
     client_ip = request.client.host if request.client else "unknown"
     now = time.time()
+
+    if _check_admin_session(request.cookies.get(_ADMIN_SESSION_COOKIE)):
+        return
 
     # Brute-force protection with temporary lockout.
     blocked_until = _admin_blocks_until.get(client_ip)
@@ -254,6 +386,12 @@ async def _require_admin(
 
     if not ADMIN_PASSWORD:
         raise HTTPException(status_code=503, detail="Admin password is not configured.")
+    if credentials is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Admin authentication required.",
+            headers={"WWW-Authenticate": 'Basic realm="RAGConnect Admin"'},
+        )
     valid_user = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
     valid_pass = secrets.compare_digest(credentials.password, ADMIN_PASSWORD)
     if not (valid_user and valid_pass):
@@ -268,6 +406,23 @@ async def _require_admin(
 
     # Successful login resets failure counter for this IP.
     _admin_failures.pop(client_ip, None)
+
+
+@app.api_route("/auth-status", methods=["GET"], include_in_schema=False)
+@app.api_route("/documents/paginated", methods=["POST"], include_in_schema=False)
+@app.api_route("/graph/label/popular", methods=["GET"], include_in_schema=False)
+@app.api_route("/graph/label/list", methods=["GET"], include_in_schema=False)
+@app.api_route("/graphs", methods=["GET"], include_in_schema=False)
+@app.api_route("/webui", methods=["GET", "HEAD"], include_in_schema=False)
+@app.api_route("/webui/", methods=["GET", "HEAD"], include_in_schema=False)
+@app.api_route("/webui/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+async def admin_lightrag_proxy(
+    request: Request,
+    path: str = "",
+    _: None = Depends(_require_admin),
+) -> Response:
+    del path
+    return await _proxy_lightrag(request, request.url.path)
 
 
 @app.get("/documents")
@@ -919,14 +1074,158 @@ loadTokens();
 </html>"""
 
 
+_LIGHTRAG_GRAPH_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RAGConnect — Knowledge Graph</title>
+<style>
+  :root{--bg:#0f1117;--surface:#1a1d27;--border:#2a2d3a;--text:#e8eaf0;--muted:#6b7280;}
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 1.5rem;height:52px;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-shrink:0}
+  .brand{display:flex;align-items:center;gap:.75rem}
+  .logo{font-weight:700;font-size:1rem;letter-spacing:-.3px}
+  .sub{color:var(--muted);font-size:.8125rem}
+  .actions{display:flex;align-items:center;gap:.75rem}
+  .btn{padding:.38rem .875rem;border:1px solid var(--border);border-radius:7px;font-size:.84rem;font-weight:500;background:transparent;color:var(--text);text-decoration:none;cursor:pointer}
+  .btn:hover{background:#202433}
+  #frame-wrap{position:relative;flex:1;min-height:0}
+  #graph-frame{width:100%;height:100%;border:0;background:#0b0d14}
+  #overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,17,23,.92);color:var(--text);font-size:.95rem;z-index:2}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="logo">RAGConnect</span>
+    <span class="sub">LightRAG Graph</span>
+  </div>
+  <div class="actions">
+    <button class="btn" onclick="reloadFrame()">Refresh</button>
+    <a class="btn" href="/ui/configs">Tokens</a>
+  </div>
+</header>
+<div id="frame-wrap">
+  <div id="overlay">Loading LightRAG UI…</div>
+  <iframe id="graph-frame" src="/webui/#/" title="LightRAG"></iframe>
+</div>
+<script>
+const frame = document.getElementById('graph-frame');
+const overlay = document.getElementById('overlay');
+
+function hideOverlay() {
+  overlay.style.display = 'none';
+}
+
+function showOverlay(text) {
+  overlay.textContent = text;
+  overlay.style.display = 'flex';
+}
+
+function openGraphTab() {
+  try {
+    const doc = frame.contentDocument || frame.contentWindow.document;
+    if (!doc) return false;
+    const tabs = Array.from(doc.querySelectorAll('[role="tab"]'));
+    const graphTab = tabs.find((tab) => /knowledge graph/i.test((tab.textContent || '').trim()));
+    if (!graphTab) return false;
+    graphTab.click();
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function syncGraphView() {
+  let attempts = 0;
+  const timer = setInterval(() => {
+    attempts += 1;
+    const ready = openGraphTab();
+    if (ready) {
+      hideOverlay();
+      clearInterval(timer);
+      return;
+    }
+    if (attempts >= 40) {
+      showOverlay('LightRAG UI loaded, but the graph tab did not auto-open. Use the native "Knowledge Graph" tab inside the page.');
+      clearInterval(timer);
+    }
+  }, 300);
+}
+
+function reloadFrame() {
+  showOverlay('Reloading LightRAG UI…');
+  frame.contentWindow.location.reload();
+}
+
+frame.addEventListener('load', () => {
+  showOverlay('Opening graph view…');
+  syncGraphView();
+});
+</script>
+</body>
+</html>"""
+
+
+_LIGHTRAG_GRAPH_BOOTSTRAP_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RAGConnect - Opening Graph</title>
+<style>
+  :root{--bg:#0f1117;--surface:#181c26;--border:#2a3140;--text:#e8ecf3;--muted:#8c95a6}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at top,#1d2431 0,#0f1117 55%);color:var(--text);font:16px/1.45 "Segoe UI",system-ui,sans-serif}
+  .card{width:min(30rem,calc(100vw - 2rem));padding:1.25rem 1.35rem;border:1px solid var(--border);border-radius:16px;background:rgba(24,28,38,.94);box-shadow:0 24px 80px rgba(0,0,0,.35)}
+  h1{margin:0 0 .45rem;font-size:1rem}
+  p{margin:0;color:var(--muted)}
+  .actions{margin-top:1rem;display:flex;gap:.75rem}
+  a{color:var(--text)}
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Opening LightRAG Knowledge Graph...</h1>
+    <p>We are switching the native LightRAG UI to the graph tab and redirecting you now.</p>
+    <div class="actions">
+      <a href="/webui/#/">Open LightRAG</a>
+      <a href="/ui/configs">Tokens</a>
+    </div>
+  </div>
+<script>
+(() => {
+  const key = 'settings-storage';
+  try {
+    const raw = window.localStorage.getItem(key);
+    const payload = raw ? JSON.parse(raw) : {};
+    const state = payload && typeof payload.state === 'object' && payload.state !== null
+      ? payload.state
+      : {};
+    state.currentTab = 'knowledge-graph';
+    payload.state = state;
+    window.localStorage.setItem(key, JSON.stringify(payload));
+  } catch (error) {
+    console.warn('Failed to persist LightRAG graph tab preference.', error);
+  }
+  window.location.replace('/webui/#/');
+})();
+</script>
+</body>
+</html>"""
+
+
+@app.get("/ui/graph", response_class=HTMLResponse)
+async def native_ui_graph(_: None = Depends(_require_admin)) -> HTMLResponse:
+    return HTMLResponse(_LIGHTRAG_GRAPH_BOOTSTRAP_HTML)
+
+
 @app.get("/ui/graph", response_class=HTMLResponse)
 async def ui_graph(_: None = Depends(_require_admin)) -> str:
-    try:
-        graph_data = await _lightrag.graph()
-    except Exception:
-        graph_data = {"nodes": [], "edges": []}
     # Embed graph data server-side — no JS fetch needed (avoids Basic auth in fetch)
-    return _GRAPH_HTML.replace("__GRAPH_DATA__", json.dumps(graph_data))
+    return _LIGHTRAG_GRAPH_BOOTSTRAP_HTML
 
 
 @app.get("/ui/configs", response_class=HTMLResponse)
@@ -935,3 +1234,8 @@ async def ui_configs(_: None = Depends(_require_admin)) -> str:
     tokens_json = json.dumps(data.get("tokens", []))
     nonce = _new_nonce()
     return _CONFIGS_HTML.replace("__TOKENS_JSON__", tokens_json).replace("__NONCE__", nonce)
+
+
+@app.get("/ui/graph", include_in_schema=False)
+async def native_ui_graph_override(_: None = Depends(_require_admin)) -> HTMLResponse:
+    return HTMLResponse(_LIGHTRAG_GRAPH_BOOTSTRAP_HTML)

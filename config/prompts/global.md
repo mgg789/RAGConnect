@@ -15,8 +15,21 @@ Treat RAGConnect as your external long-term memory and assume that skipping it m
 - Default rule: it is better to store important context than to lose it.
 - Project knowledge belongs in project memory with `project_label`.
 - Personal notes and cross-project notes belong in local memory without `project_label`.
-- Project knowledge belongs in project memory with `project_label`.
-- Personal notes and cross-project notes belong in local memory without `project_label`.
+
+### Good example of memory writing
+Bad writes:
+- "worked on memory stuff"
+- "maybe this caused the issue"
+- "need to check later"
+- "verification marker 1776368301 route local default"
+
+Good writes:
+- "RAGConnect uses local memory as the default fallback when remote project memory is unavailable."
+- "Codex local memory verification succeeded after fixing the embedding dimension mismatch."
+- "The remote graph UI was deployed on server 17 and became reachable through the public route."
+
+When possible, write in this style:
+[Subject] + [artifact/method/event/data/location/concept/content] + [important condition or relation]
 
 ### Exceptions
 
