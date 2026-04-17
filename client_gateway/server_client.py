@@ -4,13 +4,15 @@ from typing import Tuple
 
 import httpx
 
+from shared.timeouts import get_request_timeout_seconds
+
 
 class ServerGatewayClient:
     """HTTP client that talks to a remote Server Gateway."""
 
-    def __init__(self, base_url: str, token: str, timeout: float = 120.0) -> None:
+    def __init__(self, base_url: str, token: str, timeout: float | None = None) -> None:
         self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else get_request_timeout_seconds()
         self._headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",

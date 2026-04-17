@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from client_gateway.config import ClientConfig, DestinationConfig, load_config
+from shared.dotenv import read_dotenv, update_dotenv
 
 app = FastAPI(title="RAGConnect Client Web UI")
 
@@ -34,6 +35,11 @@ app = FastAPI(title="RAGConnect Client Web UI")
 def _config_path() -> Path:
     env = os.environ.get("RAGCONNECT_CONFIG_PATH")
     return Path(env) if env else Path.home() / ".ragconnect" / "client_config.yaml"
+
+
+def _local_env_path() -> Path:
+    env = os.environ.get("RAGCONNECT_ENV_PATH")
+    return Path(env) if env else Path.home() / ".ragconnect" / ".env"
 
 
 def _read() -> dict:
@@ -49,6 +55,14 @@ def _write(data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as fh:
         yaml.dump(data, fh, default_flow_style=False, allow_unicode=True)
+
+
+def _mask_secret(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 10:
+        return "•" * len(value)
+    return f"{value[:6]}••••{value[-4:]}"
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +85,11 @@ class DefaultProjectIn(BaseModel):
 class SettingsIn(BaseModel):
     remote_only_mode: bool = False
     strict_project_routing: bool = True
+
+
+class LocalOpenAIConfigIn(BaseModel):
+    openai_api_base: Optional[str] = None
+    openai_api_key: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +190,39 @@ async def set_settings(body: SettingsIn):
     data["strict_project_routing"] = bool(body.strict_project_routing)
     _write(data)
     return {"status": "ok"}
+
+
+@app.get("/api/local-openai-config")
+async def get_local_openai_config():
+    env_values = read_dotenv(_local_env_path())
+    api_key = env_values.get("OPENAI_API_KEY", "")
+    return {
+        "status": "ok",
+        "openai_api_base": env_values.get("OPENAI_API_BASE", ""),
+        "has_openai_api_key": bool(api_key),
+        "masked_openai_api_key": _mask_secret(api_key),
+        "env_path": str(_local_env_path()),
+    }
+
+
+@app.put("/api/local-openai-config")
+async def set_local_openai_config(body: LocalOpenAIConfigIn):
+    updates: dict[str, str | None] = {
+        "OPENAI_API_BASE": (body.openai_api_base or "").strip() or None,
+    }
+    incoming_key = (body.openai_api_key or "").strip()
+    if incoming_key:
+        updates["OPENAI_API_KEY"] = incoming_key
+
+    update_dotenv(_local_env_path(), updates)
+    env_values = read_dotenv(_local_env_path())
+    return {
+        "status": "ok",
+        "restart_required": True,
+        "openai_api_base": env_values.get("OPENAI_API_BASE", ""),
+        "has_openai_api_key": bool(env_values.get("OPENAI_API_KEY")),
+        "masked_openai_api_key": _mask_secret(env_values.get("OPENAI_API_KEY", "")),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +399,29 @@ _HTML = r"""<!DOCTYPE html>
             <button type="submit" class="btn btn-primary">Set Local LightRAG</button>
           </div>
         </form>
+        <p class="hint">This changes only the local destination URL. OpenAI-compatible credentials are configured below.</p>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Local OpenAI-Compatible Settings</div>
+        <p class="hint" style="margin-bottom:.75rem">
+          Stored in <code id="local-env-path">~/.ragconnect/.env</code>. Leave the API key blank to keep the current value.
+          Restart the local stack after saving to apply changes.
+        </p>
+        <form id="local-openai-form">
+          <div class="form-row">
+            <div class="fg lg">
+              <label>OpenAI API Base</label>
+              <input id="local-openai-base" name="openai_api_base" class="optional" placeholder="https://api.openai.com/v1">
+            </div>
+            <div class="fg lg">
+              <label>OpenAI API Key</label>
+              <input id="local-openai-key" name="openai_api_key" type="password" placeholder="Leave blank to keep current" autocomplete="new-password">
+            </div>
+            <button type="submit" class="btn btn-primary">Save OpenAI Settings</button>
+          </div>
+        </form>
+        <p id="local-openai-status" class="hint" style="margin-top:.625rem">Loading current local credentials…</p>
       </div>
 
       <div class="divider"></div>
@@ -426,6 +501,27 @@ function mask(t) {
     : '\u2022'.repeat(8);
 }
 
+function renderLocalOpenAIStatus(cfg) {
+  $('local-env-path').textContent = cfg.env_path || '~/.ragconnect/.env';
+  $('local-openai-base').value = cfg.openai_api_base || '';
+  $('local-openai-key').value = '';
+  $('local-openai-key').placeholder = cfg.has_openai_api_key
+    ? `Current: ${cfg.masked_openai_api_key || 'configured'} (leave blank to keep)`
+    : 'Set a new API key';
+  $('local-openai-status').textContent = cfg.has_openai_api_key
+    ? `API key configured: ${cfg.masked_openai_api_key}`
+    : 'API key is not configured yet.';
+}
+
+async function loadLocalOpenAIConfig() {
+  const r = await fetch('/api/local-openai-config');
+  const d = await r.json();
+  if (d.status !== 'ok') {
+    throw new Error(d.error || 'Failed to load local OpenAI settings.');
+  }
+  renderLocalOpenAIStatus(d);
+}
+
 // ---- render destinations table ----
 function renderDestinations(dests, defaultProject) {
   const tbody = $('dest-tbody');
@@ -488,6 +584,7 @@ async function load() {
       projects.filter(p => p.enabled).map(p =>
         `<option value="${esc(p.label)}"${p.label === def ? ' selected' : ''}>${esc(p.label)}</option>`
       ).join('');
+    await loadLocalOpenAIConfig();
   } catch(e) {
     flash('Could not load config: ' + e.message, 'err');
   }
@@ -517,6 +614,26 @@ $('add-project-form').addEventListener('submit', async e => {
   const d = await r.json();
   if (d.status === 'ok') { e.target.reset(); load(); flash('Project destination added.', 'ok'); }
   else flash(d.error || 'Failed.', 'err');
+});
+
+$('local-openai-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const r = await fetch('/api/local-openai-config', {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      openai_api_base: fd.get('openai_api_base'),
+      openai_api_key: fd.get('openai_api_key'),
+    })
+  });
+  const d = await r.json();
+  if (d.status === 'ok') {
+    renderLocalOpenAIStatus(d);
+    flash('Local OpenAI settings saved. Restart the local stack to apply them.', 'ok');
+  } else {
+    flash(d.error || 'Failed to save local OpenAI settings.', 'err');
+  }
 });
 
 // ---- toggle ----

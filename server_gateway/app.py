@@ -29,8 +29,10 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
+from shared.dotenv import read_dotenv, update_dotenv
 from shared.errors import ERROR_DESTINATION_UNAVAILABLE
 from shared.lightrag_client import LightRAGClient
+from shared.timeouts import get_request_timeout_seconds
 from server_gateway.auth import AuthError, require_write_role, validate_token
 from server_gateway.token_store import TokenStore
 
@@ -40,12 +42,14 @@ from server_gateway.token_store import TokenStore
 
 LIGHTRAG_URL: str = os.environ.get("LIGHTRAG_URL", "http://127.0.0.1:9621")
 TOKEN_STORE_PATH: Path = Path(os.environ.get("TOKEN_STORE_PATH", "server_tokens.yaml"))
+ENV_FILE_PATH: Path = Path(os.environ.get("RAGCONNECT_ENV_FILE", Path.cwd() / ".env"))
+REQUEST_TIMEOUT_SECONDS = get_request_timeout_seconds()
 
 app = FastAPI(title="RAGConnect Server Gateway")
 _admin_basic = HTTPBasic(auto_error=False)
 
 _token_store = TokenStore(TOKEN_STORE_PATH)
-_lightrag = LightRAGClient(LIGHTRAG_URL)
+_lightrag = LightRAGClient(LIGHTRAG_URL, timeout=REQUEST_TIMEOUT_SECONDS)
 
 # Short-lived page nonces for admin JS calls (avoids Basic-auth-in-fetch issues)
 _admin_nonces: dict[str, float] = {}
@@ -79,6 +83,14 @@ def _check_admin_session(token: Optional[str]) -> bool:
         return False
     exp = _admin_sessions.get(token, 0)
     return exp > time.time()
+
+
+def _mask_secret(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 10:
+        return "•" * len(value)
+    return f"{value[:6]}••••{value[-4:]}"
 ADMIN_USERNAME = os.environ.get("RAGCONNECT_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("RAGCONNECT_ADMIN_PASSWORD", "")
 RATE_LIMIT_REQUESTS = int(os.environ.get("RAGCONNECT_RATE_LIMIT_REQUESTS", "120"))
@@ -224,7 +236,7 @@ async def _proxy_lightrag(request: Request, path: str) -> Response:
     }
     body = await request.body()
 
-    async with httpx.AsyncClient(follow_redirects=False, timeout=120.0) as client:
+    async with httpx.AsyncClient(follow_redirects=False, timeout=REQUEST_TIMEOUT_SECONDS) as client:
         upstream = await client.request(
             request.method,
             target,
@@ -515,6 +527,11 @@ class TokenCreateRequest(BaseModel):
     expires_days: int = 90
 
 
+class RuntimeConfigUpdateRequest(BaseModel):
+    openai_api_base: Optional[str] = None
+    openai_api_key: Optional[str] = None
+
+
 def _read_token_store() -> dict:
     if not TOKEN_STORE_PATH.exists():
         return {"tokens": []}
@@ -526,6 +543,10 @@ def _write_token_store(data: dict) -> None:
     TOKEN_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(TOKEN_STORE_PATH, "w") as fh:
         yaml.dump(data, fh, default_flow_style=False, allow_unicode=True)
+
+
+def _read_runtime_config() -> dict[str, str]:
+    return read_dotenv(ENV_FILE_PATH)
 
 
 def _require_admin_or_nonce(request: Request, nonce: Optional[str] = Query(None)) -> None:
@@ -625,6 +646,62 @@ async def admin_tokens_revoke(
         return _err("not_found", f"Token '{token_id}' not found.", 404)
     _write_token_store(data)
     return JSONResponse(content={"status": "ok"})
+
+
+@app.get("/admin/runtime-config")
+async def admin_runtime_config(
+    request: Request,
+    nonce: Optional[str] = Query(None),
+    credentials: Optional[HTTPBasicCredentials] = Depends(HTTPBasic(auto_error=False)),
+) -> JSONResponse:
+    if not (nonce and _check_nonce(nonce)):
+        if not credentials:
+            raise HTTPException(status_code=401, headers={"WWW-Authenticate": 'Basic realm="RAGConnect Admin"'})
+        await _require_admin(request, credentials)
+
+    runtime = _read_runtime_config()
+    api_key = runtime.get("OPENAI_API_KEY", "")
+    return JSONResponse(content={
+        "status": "ok",
+        "openai_api_base": runtime.get("OPENAI_API_BASE", ""),
+        "has_openai_api_key": bool(api_key),
+        "masked_openai_api_key": _mask_secret(api_key),
+        "env_path": str(ENV_FILE_PATH),
+        "request_timeout_seconds": REQUEST_TIMEOUT_SECONDS,
+    })
+
+
+@app.put("/admin/runtime-config")
+async def admin_runtime_config_update(
+    req: RuntimeConfigUpdateRequest,
+    request: Request,
+    nonce: Optional[str] = Query(None),
+    credentials: Optional[HTTPBasicCredentials] = Depends(HTTPBasic(auto_error=False)),
+) -> JSONResponse:
+    if not (nonce and _check_nonce(nonce)):
+        if not credentials:
+            raise HTTPException(status_code=401, headers={"WWW-Authenticate": 'Basic realm="RAGConnect Admin"'})
+        await _require_admin(request, credentials)
+
+    updates: dict[str, str | None] = {
+        "OPENAI_API_BASE": (req.openai_api_base or "").strip() or None,
+    }
+    incoming_key = (req.openai_api_key or "").strip()
+    if incoming_key:
+        updates["OPENAI_API_KEY"] = incoming_key
+
+    update_dotenv(ENV_FILE_PATH, updates)
+    runtime = _read_runtime_config()
+    api_key = runtime.get("OPENAI_API_KEY", "")
+    return JSONResponse(content={
+        "status": "ok",
+        "restart_required": True,
+        "openai_api_base": runtime.get("OPENAI_API_BASE", ""),
+        "has_openai_api_key": bool(api_key),
+        "masked_openai_api_key": _mask_secret(api_key),
+        "env_path": str(ENV_FILE_PATH),
+        "request_timeout_seconds": REQUEST_TIMEOUT_SECONDS,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -946,6 +1023,30 @@ _CONFIGS_HTML = r"""<!DOCTYPE html>
   </div>
 </div>
 
+<div class="card">
+  <div class="card-head">OpenAI-Compatible Runtime Settings</div>
+  <div class="card-body">
+    <p class="hint" style="margin-bottom:.85rem">
+      Stored in <code id="runtime-env-path">.env</code>. Leave the API key blank to keep the current value.
+      After saving, restart the server stack so LightRAG and the gateway reload the new credentials.
+    </p>
+    <form id="runtime-config-form">
+      <div class="form-row">
+        <div class="fg lg">
+          <label>OpenAI API Base</label>
+          <input id="runtime-openai-base" name="openai_api_base" placeholder="https://api.openai.com/v1">
+        </div>
+        <div class="fg lg">
+          <label>OpenAI API Key</label>
+          <input id="runtime-openai-key" name="openai_api_key" type="password" placeholder="Leave blank to keep current" autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn btn-primary">Save Runtime Settings</button>
+      </div>
+    </form>
+    <p id="runtime-config-status" class="hint">Loading current runtime credentials…</p>
+  </div>
+</div>
+
 </main>
 
 <div id="modal-bg" class="modal-bg">
@@ -983,6 +1084,27 @@ function statusBadge(enabled, expires) {
 function fmtExpires(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString(undefined, {year:'numeric',month:'short',day:'numeric'});
+}
+
+function renderRuntimeConfig(cfg) {
+  $('runtime-env-path').textContent = cfg.env_path || '.env';
+  $('runtime-openai-base').value = cfg.openai_api_base || '';
+  $('runtime-openai-key').value = '';
+  $('runtime-openai-key').placeholder = cfg.has_openai_api_key
+    ? `Current: ${cfg.masked_openai_api_key || 'configured'} (leave blank to keep)`
+    : 'Set a new API key';
+  $('runtime-config-status').textContent = cfg.has_openai_api_key
+    ? `API key configured: ${cfg.masked_openai_api_key}. Current request timeout: ${cfg.request_timeout_seconds || 600}s.`
+    : `API key is not configured yet. Current request timeout: ${cfg.request_timeout_seconds || 600}s.`;
+}
+
+async function loadRuntimeConfig() {
+  const r = await fetch(`/admin/runtime-config?nonce=${NONCE}`);
+  const d = await r.json();
+  if (d.status !== 'ok') {
+    throw new Error(d.error?.message || 'Failed to load runtime config.');
+  }
+  renderRuntimeConfig(d);
 }
 
 const NONCE = '__NONCE__';
@@ -1043,6 +1165,26 @@ $('create-form').addEventListener('submit', async e => {
   }
 });
 
+$('runtime-config-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const r = await fetch(`/admin/runtime-config?nonce=${NONCE}`, {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      openai_api_base: fd.get('openai_api_base'),
+      openai_api_key: fd.get('openai_api_key'),
+    }),
+  });
+  const d = await r.json();
+  if (d.status === 'ok') {
+    renderRuntimeConfig(d);
+    flash('Runtime settings saved. Restart the server stack to apply them.', 'ok');
+  } else {
+    flash(d.error?.message || 'Failed to save runtime settings.', 'err');
+  }
+});
+
 async function revoke(tokenId) {
   if (!confirm('Revoke this token? This cannot be undone.')) return;
   const r = await fetch(`/admin/tokens/${encodeURIComponent(tokenId)}?nonce=${NONCE}`, {
@@ -1069,6 +1211,7 @@ async function copyToken() {
 $('modal-bg').addEventListener('click', e => { if (e.target === $('modal-bg')) closeModal(); });
 
 loadTokens();
+loadRuntimeConfig().catch(err => flash(err.message || 'Failed to load runtime config.', 'err'));
 </script>
 </body>
 </html>"""

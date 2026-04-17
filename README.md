@@ -50,6 +50,7 @@ What `install-local-stack.ps1` does:
 - writes `~/.ragconnect/.env` and `client_config.yaml`
 - optionally installs MCP for Codex or Claude Desktop
 - optionally enables auto-start
+- after installation you can later edit the local OpenAI-compatible base URL and API key in `ragconnect-web`
 
 ```powershell
 powershell -File scripts/windows/install-local-stack.ps1 `
@@ -77,6 +78,7 @@ What `install-local-stack.sh` does:
 - writes `~/.ragconnect/.env` (`chmod 600`) and `client_config.yaml`
 - optionally installs MCP for Codex or Claude Desktop
 - optionally enables auto-start via `~/Library/LaunchAgents/com.ragconnect.local-stack.plist`
+- after installation you can later edit the local OpenAI-compatible base URL and API key in `ragconnect-web`
 
 ```bash
 bash scripts/macos/install-local-stack.sh \
@@ -103,14 +105,40 @@ enabled = true
 PYTHONPATH = "/path/to/RAGConnect"
 RAGCONNECT_CONFIG_PATH = "/Users/<you>/.ragconnect/client_config.yaml"
 RAGCONNECT_PROMPTS_DIR = "/path/to/RAGConnect/config/prompts"
+RAGCONNECT_HTTP_TIMEOUT_SECONDS = "600"
+MCP_TOOL_TIMEOUT = "600000"
 ```
 
 The scripts `install-codex-mcp.ps1` and `install-codex-mcp.sh` write this block automatically.
+By default we set the MCP-side request timeout to `600` seconds so large memory searches do not fail after the old `120s` limit.
 
 ## MCP setup for Claude Desktop
 
 Claude Desktop uses the same module entrypoint: `python -m client_gateway.mcp_server`.  
-The scripts `install-claude-mcp.ps1` and `install-claude-mcp.sh` update `claude_desktop_config.json` automatically.
+The scripts `install-claude-mcp.ps1` and `install-claude-mcp.sh` update `claude_desktop_config.json` automatically with the same `600s` timeout.
+
+Example block:
+
+```json
+{
+  "mcpServers": {
+    "ragconnect": {
+      "command": "/Users/<you>/.ragconnect/.venv/bin/python3",
+      "args": ["-m", "client_gateway.mcp_server"],
+      "cwd": "/path/to/RAGConnect",
+      "env": {
+        "PYTHONPATH": "/path/to/RAGConnect",
+        "RAGCONNECT_CONFIG_PATH": "/Users/<you>/.ragconnect/client_config.yaml",
+        "RAGCONNECT_PROMPTS_DIR": "/path/to/RAGConnect/config/prompts",
+        "RAGCONNECT_HTTP_TIMEOUT_SECONDS": "600",
+        "MCP_TOOL_TIMEOUT": "600000",
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}
+```
 
 ## Auto-start for local memory
 
@@ -157,6 +185,7 @@ docker compose exec server-gateway ragconnect-server token create --role write -
 - a project gateway with token auth
 
 So the Docker configuration mirrors the working setup already validated in a real environment.
+The server-side `.env` can also be updated later from the admin UI (`/ui/configs`) for `OPENAI_API_BASE` and `OPENAI_API_KEY`; restart the server stack afterwards.
 
 ## Memory model
 

@@ -24,6 +24,8 @@ $serverConfig = [pscustomobject]@{
         PYTHONPATH = $RepoRoot
         RAGCONNECT_CONFIG_PATH = (Join-Path $env:USERPROFILE '.ragconnect\client_config.yaml')
         RAGCONNECT_PROMPTS_DIR = (Join-Path $RepoRoot 'config\prompts')
+        RAGCONNECT_HTTP_TIMEOUT_SECONDS = '600'
+        MCP_TOOL_TIMEOUT = '600000'
         PYTHONUTF8 = '1'
         PYTHONIOENCODING = 'utf-8'
     }

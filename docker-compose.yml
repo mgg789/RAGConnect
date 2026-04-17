@@ -47,6 +47,7 @@ services:
       TOKEN_STORE_PATH: /data/server_tokens.yaml
       RAGCONNECT_ADMIN_USERNAME: ${RAGCONNECT_ADMIN_USERNAME:-admin}
       RAGCONNECT_ADMIN_PASSWORD: ${RAGCONNECT_ADMIN_PASSWORD}
+      RAGCONNECT_HTTP_TIMEOUT_SECONDS: ${RAGCONNECT_HTTP_TIMEOUT_SECONDS:-600}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s

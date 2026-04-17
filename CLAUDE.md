@@ -4,6 +4,8 @@ These instructions are intentionally identical for `AGENTS.md` and `CLAUDE.md`.
 
 Their goal is to collect configuration from the user in plain language, set up memory without requiring terminal usage, and then use that memory as a working long-term memory for the agent.
 
+Trigger setup flow when user asks `Create my own memory here`
+
 ## Goal
 
 Use RAGConnect as a real working memory, not as an optional tool.

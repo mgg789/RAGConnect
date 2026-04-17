@@ -51,6 +51,8 @@ cfg['mcpServers']['ragconnect'] = {
         'PYTHONPATH': repo_root,
         'RAGCONNECT_CONFIG_PATH': rag_home + '/client_config.yaml',
         'RAGCONNECT_PROMPTS_DIR': repo_root + '/config/prompts',
+        'RAGCONNECT_HTTP_TIMEOUT_SECONDS': '600',
+        'MCP_TOOL_TIMEOUT': '600000',
         'PYTHONUTF8': '1',
         'PYTHONIOENCODING': 'utf-8',
     }

@@ -22,6 +22,8 @@ enabled = true
 PYTHONPATH = "$($RepoRoot.Replace('\','/'))"
 RAGCONNECT_CONFIG_PATH = "$($env:USERPROFILE.Replace('\','/'))/.ragconnect/client_config.yaml"
 RAGCONNECT_PROMPTS_DIR = "$($RepoRoot.Replace('\','/'))/config/prompts"
+RAGCONNECT_HTTP_TIMEOUT_SECONDS = "600"
+MCP_TOOL_TIMEOUT = "600000"
 PYTHONUTF8 = "1"
 PYTHONIOENCODING = "utf-8"
 "@

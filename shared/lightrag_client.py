@@ -5,14 +5,15 @@ from typing import List
 import httpx
 
 from shared.models import ResultSource, SearchResult
+from shared.timeouts import get_request_timeout_seconds
 
 
 class LightRAGClient:
     """Thin HTTP client that speaks to a running LightRAG server."""
 
-    def __init__(self, base_url: str, timeout: float = 120.0) -> None:
+    def __init__(self, base_url: str, timeout: float | None = None) -> None:
         self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else get_request_timeout_seconds()
 
     async def search(self, query: str) -> List[SearchResult]:
         response = await self._post("/query", {"query": query, "mode": "hybrid"})
