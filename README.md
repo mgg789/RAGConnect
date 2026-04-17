@@ -1,4 +1,4 @@
-﻿# RAGConnect
+# RAGConnect
 
 RAGConnect gives your AI agents one shared memory layer so you can work more efficiently. It works especially well for teams: you can create multiple project memory spaces, connect them to your local memory, keep personal and project memory separate, and still let your agents collaborate through shared project context.
 
