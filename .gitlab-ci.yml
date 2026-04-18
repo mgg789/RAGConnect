@@ -71,7 +71,7 @@ build_services_lightrag:
       - IMAGE_NAME: [lightrag]
   variables:
     DOCKERFILE_PATH: "Dockerfile.lightrag"
-    BUILD_CONTEXT: "${IMAGE_NAME}"
+    BUILD_CONTEXT: "."
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev"'
       changes:
