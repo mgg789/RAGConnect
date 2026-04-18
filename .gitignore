@@ -15,3 +15,5 @@ Thumbs.db
 /.claude
 .claude/worktrees/zen-easley
 .playwright-cli/
+
+.gitlab-ci-local/
