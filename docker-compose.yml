@@ -1,7 +1,8 @@
 ﻿
 services:
   lightrag:
-    image: registry.git.sverk.io/mgg789/ragconnect/lightrag:latest
+    ## Building from scratch due to errors in CI with size of docker layers
+    # image: registry.git.sverk.io/mgg789/ragconnect/lightrag:latest
     build:
       context: .
       dockerfile: Dockerfile.lightrag
