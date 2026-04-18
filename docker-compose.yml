@@ -1,6 +1,7 @@
 ﻿
 services:
   lightrag:
+    image: registry.git.sverk.io/mgg789/ragconnect:lightrag-latest
     build:
       context: .
       dockerfile: Dockerfile.lightrag
@@ -31,6 +32,7 @@ services:
       start_period: 30s
 
   server-gateway:
+    image: registry.git.sverk.io/mgg789/ragconnect:server-latest
     build:
       context: .
       dockerfile: Dockerfile.server
