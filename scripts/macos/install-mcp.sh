@@ -104,7 +104,54 @@ PYEOF
 
 # ── Dispatch ───────────────────────────────────────────────────────────────────
 IFS=',' read -ra TARGETS <<< "$TARGET"
-[[ "${TARGETS[0]}" == "all" ]] && TARGETS=(claude codex cursor)
+[[ "${TARGETS[0]}" == "all" ]] && TARGETS=(claude codex cursor vscode)
+
+install_vscode() {
+  local settings="$HOME/Library/Application Support/Code/User/settings.json"
+  [[ -d "$HOME/Library/Application Support/Code - Insiders" && ! -d "$HOME/Library/Application Support/Code" ]] && \
+    settings="$HOME/Library/Application Support/Code - Insiders/User/settings.json"
+
+  if [[ ! -d "$(dirname "$settings")" ]]; then
+    echo "[RAGConnect] WARNING: VS Code not found, skipping."
+    return
+  fi
+
+  mkdir -p "$(dirname "$settings")"
+  [[ -f "$settings" ]] || echo '{}' > "$settings"
+
+  "$PYTHON_EXE" - <<PYEOF
+import json
+
+settings_path = """$settings"""
+repo_root     = """$REPO_ROOT"""
+rag_home      = """$RAG_HOME"""
+python_exe    = """$PYTHON_EXE"""
+
+with open(settings_path) as f:
+    cfg = json.load(f)
+
+cfg.setdefault('mcp.servers', {})
+cfg['mcp.servers']['ragconnect'] = {
+    'type':    'stdio',
+    'command': python_exe,
+    'args':    ['-m', 'client_gateway.mcp_server'],
+    'env': {
+        'PYTHONPATH':                      repo_root,
+        'RAGCONNECT_CONFIG_PATH':          rag_home + '/client_config.yaml',
+        'RAGCONNECT_PROMPTS_DIR':          repo_root + '/config/prompts',
+        'RAGCONNECT_HTTP_TIMEOUT_SECONDS': '600',
+        'MCP_TOOL_TIMEOUT':                '600000',
+        'PYTHONUTF8':                      '1',
+        'PYTHONIOENCODING':                'utf-8',
+    }
+}
+
+with open(settings_path, 'w') as f:
+    json.dump(cfg, f, indent=2)
+
+print(f'[RAGConnect] VS Code MCP → {settings_path}')
+PYEOF
+}
 
 for t in "${TARGETS[@]}"; do
   t="$(echo "$t" | tr -d ' ')"
@@ -118,8 +165,11 @@ for t in "${TARGETS[@]}"; do
     codex)
       install_codex
       ;;
+    vscode)
+      install_vscode
+      ;;
     *)
-      echo "[RAGConnect] WARNING: unknown target '$t'. Supported: claude, codex, cursor" ;;
+      echo "[RAGConnect] WARNING: unknown target '$t'. Supported: claude, codex, cursor, vscode" ;;
   esac
 done
 

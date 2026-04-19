@@ -10,13 +10,13 @@
 param(
     [string]$RepoRoot   = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
     [string]$PythonPath = (Join-Path $env:USERPROFILE '.ragconnect\.venv\Scripts\python.exe'),
-    [string]$Target     = 'all'   # claude | codex | cursor | all (comma-separated)
+    [string]$Target     = 'all'   # claude | codex | cursor | vscode | all (comma-separated)
 )
 
 $ErrorActionPreference = 'Stop'
 $RepoRoot = (Resolve-Path $RepoRoot).Path
 
-$targets = if ($Target -eq 'all') { @('claude','codex','cursor') } `
+$targets = if ($Target -eq 'all') { @('claude','codex','cursor','vscode') } `
            else { $Target -split ',' | ForEach-Object { $_.Trim().ToLower() } }
 
 # ── Shared MCP server config block ─────────────────────────────────────────
@@ -96,8 +96,30 @@ foreach ($t in $targets) {
         'codex' {
             Install-CodexClient (Join-Path $env:USERPROFILE '.codex\config.toml')
         }
+        'vscode' {
+            # VS Code user-level settings (GitHub Copilot Chat)
+            $vsSettings = Join-Path $env:APPDATA 'Code\User\settings.json'
+            if (-not (Test-Path (Split-Path $vsSettings))) {
+                Write-Warning "VS Code not found at $vsSettings — skipping"
+            } else {
+                if (-not (Test-Path $vsSettings)) { '{}' | Set-Content $vsSettings -Encoding utf8 }
+                $json = Get-Content $vsSettings -Raw | ConvertFrom-Json -Depth 10
+                if (-not $json.'mcp.servers') {
+                    $json | Add-Member -NotePropertyName 'mcp.servers' -NotePropertyValue ([pscustomobject]@{})
+                }
+                $vsBlock = [ordered]@{
+                    type    = 'stdio'
+                    command = $PythonPath
+                    args    = @('-m','client_gateway.mcp_server')
+                    env     = (Make-ServerConfig).env
+                }
+                $json.'mcp.servers' | Add-Member -Force -NotePropertyName ragconnect -NotePropertyValue $vsBlock
+                $json | ConvertTo-Json -Depth 10 | Set-Content -Path $vsSettings -Encoding utf8
+                Write-Host "[RAGConnect] VS Code MCP → $vsSettings"
+            }
+        }
         default {
-            Write-Warning "Unknown target '$t'. Supported: claude, codex, cursor"
+            Write-Warning "Unknown target '$t'. Supported: claude, codex, cursor, vscode"
         }
     }
 }
