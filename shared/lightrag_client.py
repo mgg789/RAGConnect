@@ -45,32 +45,21 @@ class LightRAGClient:
         return await self._get("/relations")
 
     async def graph(self) -> dict:
-        # Try modern LightRAG graph API (/graph/label/list + /graphs) first,
-        # then fall back to legacy /graph endpoint.
+        # LightRAG ≥1.x: /graphs?label=*  returns the full graph across all labels.
+        # Fallback: legacy /graph endpoint for older installs.
         try:
-            labels_resp = await self._get("/graph/label/list")
-            labels: list = []
-            if isinstance(labels_resp, list):
-                labels = labels_resp
-            elif isinstance(labels_resp, dict):
-                labels = labels_resp.get("data", labels_resp.get("labels", []))
-            if labels:
-                # Fetch a large subgraph starting from the first entity
-                seed = labels[0] if isinstance(labels[0], str) else str(labels[0])
-                import urllib.parse
-                params = urllib.parse.urlencode({
-                    "label": seed,
-                    "max_depth": 5,
-                    "max_nodes": 500,
-                })
-                data = await self._get(f"/graphs?{params}")
-                nodes = data.get("nodes", [])
-                edges = data.get("edges", [])
+            data = await self._get("/graphs?label=*&max_depth=3&max_nodes=1000")
+            nodes = data.get("nodes", [])
+            edges = data.get("edges", [])
+            if nodes:
                 return {"nodes": nodes, "edges": edges}
         except Exception:
             pass
-        # Legacy fallback
-        return await self._get("/graph")
+        try:
+            return await self._get("/graph")
+        except Exception:
+            pass
+        return {"nodes": [], "edges": []}
 
     async def rebuild(self) -> dict:
         return await self._post("/rebuild", {})
