@@ -52,17 +52,20 @@ if (-not (Test-Port 9621)) {
     Start-Process -FilePath $LightRagExe -ArgumentList '--host','127.0.0.1','--port','9621','--working-dir',(Join-Path $RagHome 'data\lightrag'),'--llm-binding','openai','--embedding-binding','openai' -WorkingDirectory $RagHome -WindowStyle Hidden -RedirectStandardOutput (Join-Path $RagHome 'lightrag.stdout.log') -RedirectStandardError (Join-Path $RagHome 'lightrag.stderr.log') | Out-Null
 }
 
+$lightragOk = $false
 for ($i = 0; $i -lt 45; $i++) {
     try {
         $resp = Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:9621/health' -TimeoutSec 3
         if ($resp.StatusCode -eq 200) {
-            Write-Host 'LightRAG local stack is running.'
+            Write-Host '[RAGConnect] LightRAG local stack is running.'
+            $lightragOk = $true
             break
         }
     } catch {}
     Start-Sleep -Seconds 2
-} else {
-    throw "LightRAG did not become healthy. Check $RagHome\\lightrag.stderr.log"
+}
+if (-not $lightragOk) {
+    throw "LightRAG did not become healthy. Check $RagHome\lightrag.stderr.log"
 }
 
 # ── ragconnect-web (destination config UI on port 8090) ───────────────────────
