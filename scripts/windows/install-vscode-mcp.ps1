@@ -25,13 +25,13 @@ $serverBlock = [ordered]@{
 }
 
 if ($Scope -eq 'project') {
-    # ── Project-level: .vscode/mcp.json ──────────────────────────────────────
+    # Project-level: .vscode/mcp.json
     $vscodeDir  = Join-Path $ProjectDir '.vscode'
     $configPath = Join-Path $vscodeDir 'mcp.json'
     New-Item -ItemType Directory -Force $vscodeDir | Out-Null
 
     $json = if (Test-Path $configPath) {
-        Get-Content $configPath -Raw | ConvertFrom-Json -Depth 10
+        Get-Content $configPath -Raw | ConvertFrom-Json
     } else { [pscustomobject]@{} }
 
     if (-not $json.servers) {
@@ -39,24 +39,24 @@ if ($Scope -eq 'project') {
     }
     $json.servers | Add-Member -Force -NotePropertyName ragconnect -NotePropertyValue $serverBlock
     $json | ConvertTo-Json -Depth 10 | Set-Content -Path $configPath -Encoding utf8
-    Write-Host "[RAGConnect] VS Code project MCP → $configPath"
+    Write-Host "[RAGConnect] VS Code project MCP -> $configPath"
 
 } else {
-    # ── User-level: VS Code settings.json ────────────────────────────────────
+    # User-level: VS Code settings.json
     $configPath = Join-Path $env:APPDATA 'Code\User\settings.json'
     if (-not (Test-Path $configPath)) {
         New-Item -ItemType Directory -Force (Split-Path $configPath) | Out-Null
         '{}' | Set-Content $configPath -Encoding utf8
     }
 
-    $json = Get-Content $configPath -Raw | ConvertFrom-Json -Depth 10
+    $json = Get-Content $configPath -Raw | ConvertFrom-Json
 
     if (-not $json.'mcp.servers') {
         $json | Add-Member -NotePropertyName 'mcp.servers' -NotePropertyValue ([pscustomobject]@{})
     }
     $json.'mcp.servers' | Add-Member -Force -NotePropertyName ragconnect -NotePropertyValue $serverBlock
     $json | ConvertTo-Json -Depth 10 | Set-Content -Path $configPath -Encoding utf8
-    Write-Host "[RAGConnect] VS Code user MCP → $configPath"
+    Write-Host "[RAGConnect] VS Code user MCP -> $configPath"
 }
 
-Write-Host "[RAGConnect] Reload VS Code window (Ctrl+Shift+P → 'Developer: Reload Window') to activate."
+Write-Host "[RAGConnect] Reload VS Code window (Ctrl+Shift+P -> 'Developer: Reload Window') to activate."

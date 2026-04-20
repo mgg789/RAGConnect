@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# RAGConnect — install MCP for one or all supported clients (Windows)
+# RAGConnect - install MCP for one or all supported clients (Windows)
 # Usage:
 #   install-mcp.ps1                        # installs for all detected clients
 #   install-mcp.ps1 -Target claude
@@ -10,16 +10,20 @@
 param(
     [string]$RepoRoot   = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
     [string]$PythonPath = (Join-Path $env:USERPROFILE '.ragconnect\.venv\Scripts\python.exe'),
-    [string]$Target     = 'all'   # claude | codex | cursor | vscode | all (comma-separated)
+    [string[]]$Target   = @('all')   # claude | codex | cursor | vscode | all (comma-separated)
 )
 
 $ErrorActionPreference = 'Stop'
 $RepoRoot = (Resolve-Path $RepoRoot).Path
 
-$targets = if ($Target -eq 'all') { @('claude','codex','cursor','vscode') } `
-           else { $Target -split ',' | ForEach-Object { $_.Trim().ToLower() } }
+$requestedTargets = @($Target) -join ','
+$targets = if ($requestedTargets.Trim().ToLower() -eq 'all') {
+    @('claude','codex','cursor','vscode')
+} else {
+    $requestedTargets -split ',' | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ }
+}
 
-# ── Shared MCP server config block ─────────────────────────────────────────
+# Shared MCP server config block
 function Make-ServerConfig {
     return [pscustomobject]@{
         command = $PythonPath
@@ -37,22 +41,22 @@ function Make-ServerConfig {
     }
 }
 
-# ── JSON-based clients (Claude Desktop, Cursor) ─────────────────────────────
+# JSON-based clients (Claude Desktop, Cursor)
 function Install-JsonClient([string]$Name, [string]$ConfigPath) {
     $ConfigDir = Split-Path $ConfigPath -Parent
     New-Item -ItemType Directory -Force $ConfigDir | Out-Null
     $json = if (Test-Path $ConfigPath) {
-        Get-Content $ConfigPath -Raw | ConvertFrom-Json -Depth 10
+        Get-Content $ConfigPath -Raw | ConvertFrom-Json
     } else { [pscustomobject]@{} }
     if (-not $json.mcpServers) {
         $json | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([pscustomobject]@{})
     }
     $json.mcpServers | Add-Member -Force -NotePropertyName ragconnect -NotePropertyValue (Make-ServerConfig)
     $json | ConvertTo-Json -Depth 10 | Set-Content -Path $ConfigPath -Encoding utf8
-    Write-Host "[RAGConnect] $Name MCP → $ConfigPath"
+    Write-Host "[RAGConnect] $Name MCP -> $ConfigPath"
 }
 
-# ── TOML-based clients (Codex) ───────────────────────────────────────────────
+# TOML-based clients (Codex)
 function Install-CodexClient([string]$ConfigPath) {
     $ConfigDir = Split-Path $ConfigPath -Parent
     New-Item -ItemType Directory -Force $ConfigDir | Out-Null
@@ -81,10 +85,10 @@ PYTHONIOENCODING = "utf-8"
 "@
     $content = ($content.TrimEnd() + $block.TrimEnd() + "`r`n")
     Set-Content -Path $ConfigPath -Encoding utf8 -Value $content
-    Write-Host "[RAGConnect] Codex MCP → $ConfigPath"
+    Write-Host "[RAGConnect] Codex MCP -> $ConfigPath"
 }
 
-# ── Install per target ───────────────────────────────────────────────────────
+# Install per target
 foreach ($t in $targets) {
     switch ($t) {
         'claude' {
@@ -100,10 +104,10 @@ foreach ($t in $targets) {
             # VS Code user-level settings (GitHub Copilot Chat)
             $vsSettings = Join-Path $env:APPDATA 'Code\User\settings.json'
             if (-not (Test-Path (Split-Path $vsSettings))) {
-                Write-Warning "VS Code not found at $vsSettings — skipping"
+                Write-Warning "VS Code not found at $vsSettings - skipping"
             } else {
                 if (-not (Test-Path $vsSettings)) { '{}' | Set-Content $vsSettings -Encoding utf8 }
-                $json = Get-Content $vsSettings -Raw | ConvertFrom-Json -Depth 10
+                $json = Get-Content $vsSettings -Raw | ConvertFrom-Json
                 if (-not $json.'mcp.servers') {
                     $json | Add-Member -NotePropertyName 'mcp.servers' -NotePropertyValue ([pscustomobject]@{})
                 }
@@ -115,11 +119,11 @@ foreach ($t in $targets) {
                 }
                 $json.'mcp.servers' | Add-Member -Force -NotePropertyName ragconnect -NotePropertyValue $vsBlock
                 $json | ConvertTo-Json -Depth 10 | Set-Content -Path $vsSettings -Encoding utf8
-                Write-Host "[RAGConnect] VS Code MCP → $vsSettings"
+                Write-Host "[RAGConnect] VS Code MCP -> $vsSettings"
             }
         }
         default {
-            Write-Warning "Unknown target '$t'. Supported: claude, codex, cursor, vscode"
+            Write-Warning ("Unknown target {0}. Supported: claude, codex, cursor, vscode" -f $t)
         }
     }
 }

@@ -9,7 +9,7 @@ $RepoRoot = (Resolve-Path $RepoRoot).Path
 $ConfigDir = Split-Path $ConfigPath -Parent
 New-Item -ItemType Directory -Force $ConfigDir | Out-Null
 if (Test-Path $ConfigPath) {
-    $json = Get-Content $ConfigPath -Raw | ConvertFrom-Json -Depth 10
+    $json = Get-Content $ConfigPath -Raw | ConvertFrom-Json
 } else {
     $json = [pscustomobject]@{}
 }
