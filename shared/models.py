@@ -37,6 +37,7 @@ class SearchResponse(BaseModel):
     status: str  # "ok" | "ok_with_warning" | "error"
     source: Optional[str] = None  # "local" | "project"
     results: Optional[List[SearchResult]] = None
+    context: Optional[dict] = None
     warning: Optional[WarningInfo] = None
     error: Optional[ErrorInfo] = None
 
@@ -45,6 +46,7 @@ class WriteResponse(BaseModel):
     status: str  # "ok" | "ok_with_warning" | "error"
     source: Optional[str] = None  # "local" | "project"
     message: Optional[str] = None
+    context: Optional[dict] = None
     warning: Optional[WarningInfo] = None
     error: Optional[ErrorInfo] = None
 
@@ -62,6 +64,7 @@ class HealthStatus(BaseModel):
     name: str
     status: str  # "ok" | "error" | "disabled"
     message: Optional[str] = None
+    details: Optional[dict] = None
 
 
 class HealthResponse(BaseModel):

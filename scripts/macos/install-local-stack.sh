@@ -7,7 +7,7 @@
 #     --python    /usr/bin/python3 \
 #     --api-key   sk-... \
 #     [--api-base https://api.openai.com/v1] \
-#     [--llm-model gpt-4o-mini] \
+#     [--llm-model gpt-5.4-mini] \
 #     [--embedding-model intfloat/multilingual-e5-small] \
 #     [--install-claude-mcp] \
 #     [--install-codex-mcp] \
@@ -20,7 +20,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PYTHON="python3"
 OPENAI_API_KEY=""
 OPENAI_API_BASE=""
-LLM_MODEL="gpt-4o-mini"
+LLM_MODEL="gpt-5.4-mini"
 LOCAL_EMBEDDING_MODEL="intfloat/multilingual-e5-small"
 LOCAL_EMBEDDING_DIM="384"
 INSTALL_CLAUDE_MCP=0

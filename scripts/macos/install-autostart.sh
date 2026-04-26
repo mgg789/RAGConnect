@@ -18,11 +18,10 @@ done
 
 PLIST_DIR="$HOME/Library/LaunchAgents"
 PLIST_FILE="$PLIST_DIR/com.ragconnect.local-stack.plist"
-START_SCRIPT="$REPO_ROOT/scripts/macos/start-local-stack.sh"
+PYTHON_EXE="$HOME/.ragconnect/.venv/bin/python3"
 RAG_HOME="$HOME/.ragconnect"
 
 mkdir -p "$PLIST_DIR"
-chmod +x "$START_SCRIPT"
 
 cat > "$PLIST_FILE" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -33,15 +32,19 @@ cat > "$PLIST_FILE" <<PLIST
     <string>com.ragconnect.local-stack</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>$START_SCRIPT</string>
+        <string>$PYTHON_EXE</string>
+        <string>-m</string>
+        <string>client_gateway.local_service</string>
+        <string>run-supervisor</string>
         <string>--repo-root</string>
         <string>$REPO_ROOT</string>
+        <string>--rag-home</string>
+        <string>$RAG_HOME</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <false/>
+    <true/>
     <key>StandardOutPath</key>
     <string>$RAG_HOME/launchd.stdout.log</string>
     <key>StandardErrorPath</key>

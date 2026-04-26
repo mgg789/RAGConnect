@@ -23,6 +23,8 @@ dependencies = [
 ragconnect-client = "client_gateway.mcp_server:main_sync"
 ragconnect-server = "server_gateway.cli:cli"
 ragconnect-web = "client_gateway.web_server:main_sync"
+ragconnect-local-service = "client_gateway.local_service:cli"
+ragconnect-host-helper = "server_gateway.host_helper:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]

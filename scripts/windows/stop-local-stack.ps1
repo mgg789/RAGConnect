@@ -1,10 +1,17 @@
-﻿param(
-    [int[]]$Ports = @(9621, 9622, 8090)
+param(
+    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
+    [string]$RagHome = (Join-Path $env:USERPROFILE '.ragconnect')
 )
 
-$ErrorActionPreference = 'SilentlyContinue'
-foreach ($port in $Ports) {
-    Get-NetTCPConnection -LocalPort $port | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object {
-        Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue
-    }
+$ErrorActionPreference = 'Stop'
+$RepoRoot = (Resolve-Path $RepoRoot).Path
+$CliExe = Join-Path $RagHome '.venv\Scripts\ragconnect-local-service.exe'
+$PythonExe = Join-Path $RagHome '.venv\Scripts\python.exe'
+
+if (Test-Path $CliExe) {
+    & $CliExe stop --repo-root $RepoRoot --rag-home $RagHome
+} elseif (Test-Path $PythonExe) {
+    & $PythonExe -m client_gateway.local_service stop --repo-root $RepoRoot --rag-home $RagHome
+} else {
+    throw "RAGConnect local service executable not found under $RagHome\.venv"
 }

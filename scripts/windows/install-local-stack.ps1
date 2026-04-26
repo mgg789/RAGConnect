@@ -3,7 +3,7 @@
     [string]$PythonPath = 'python',
     [string]$OpenAIApiKey,
     [string]$OpenAIApiBase = '',
-    [string]$LlmModel = 'gpt-4o-mini',
+    [string]$LlmModel = 'gpt-5.4-mini',
     [string]$LocalEmbeddingModel = 'intfloat/multilingual-e5-small',
     [int]$LocalEmbeddingDim = 384,
     [switch]$InstallCodexMcp,

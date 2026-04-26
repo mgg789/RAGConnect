@@ -1,16 +1,3 @@
-"""Web UI for managing Client Gateway configuration.
-
-Start:
-    ragconnect-web
-    # or:
-    python -m client_gateway.web_server
-
-Environment variables:
-    RAGCONNECT_CONFIG_PATH  — path to client_config.yaml
-    RAGCONNECT_WEB_HOST     — bind host  (default: 127.0.0.1)
-    RAGCONNECT_WEB_PORT     — bind port  (default: 8090)
-"""
-
 from __future__ import annotations
 
 import os
@@ -18,19 +5,21 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from client_gateway.config import ClientConfig, DestinationConfig, load_config
+from client_gateway.audit import read_recent_activity
+from client_gateway.config import ClientConfig, DestinationConfig, ProjectContextConfig, load_config, save_config
+from client_gateway.context import normalize_repo_root
+from client_gateway.local_service import LocalServiceManager
+from client_gateway.project_registry import register_project, remove_project_context, write_memory_snippet
 from shared.dotenv import read_dotenv, update_dotenv
+from shared.ops_log import mask_secret, tail_text
+from shared.runtime import get_local_log_dir
 
 app = FastAPI(title="RAGConnect Client Web UI")
 
-
-# ---------------------------------------------------------------------------
-# Config I/O
-# ---------------------------------------------------------------------------
 
 def _config_path() -> Path:
     env = os.environ.get("RAGCONNECT_CONFIG_PATH")
@@ -42,44 +31,27 @@ def _local_env_path() -> Path:
     return Path(env) if env else Path.home() / ".ragconnect" / ".env"
 
 
-def _read() -> dict:
-    path = _config_path()
-    if not path.exists():
-        return {}
-    with open(path) as fh:
-        return yaml.safe_load(fh) or {}
+def _manager() -> LocalServiceManager:
+    return LocalServiceManager(repo_root=os.environ.get("RAGCONNECT_REPO_ROOT"), rag_home=os.environ.get("RAGCONNECT_HOME"))
 
 
-def _write(data: dict) -> None:
-    path = _config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as fh:
-        yaml.dump(data, fh, default_flow_style=False, allow_unicode=True)
+def _read() -> ClientConfig:
+    return load_config(_config_path())
 
 
-def _mask_secret(value: str) -> str:
-    if not value:
-        return ""
-    if len(value) <= 10:
-        return "•" * len(value)
-    return f"{value[:6]}••••{value[-4:]}"
+def _write(config: ClientConfig) -> None:
+    save_config(config, _config_path())
 
-
-# ---------------------------------------------------------------------------
-# Request models
-# ---------------------------------------------------------------------------
 
 class DestinationIn(BaseModel):
     url: str
-    label: Optional[str] = None   # absent → local LightRAG
-    token: Optional[str] = None   # absent → native API
+    label: Optional[str] = None
+    token: Optional[str] = None
     display_name: Optional[str] = None
-    prefer_for_search: bool = False
-    allow_local_search_augmentation: bool = False
 
 
 class DefaultProjectIn(BaseModel):
-    label: Optional[str] = None   # None → clear default
+    label: Optional[str] = None
 
 
 class SettingsIn(BaseModel):
@@ -87,588 +59,461 @@ class SettingsIn(BaseModel):
     strict_project_routing: bool = True
 
 
-class LocalOpenAIConfigIn(BaseModel):
+class LocalRuntimeIn(BaseModel):
     openai_api_base: Optional[str] = None
     openai_api_key: Optional[str] = None
+    llm_model: Optional[str] = None
+    local_embedding_mode: Optional[str] = None
+    local_embedding_model: Optional[str] = None
+    local_embedding_dim: Optional[str] = None
+    embedding_model: Optional[str] = None
+    embedding_dim: Optional[str] = None
 
 
-# ---------------------------------------------------------------------------
-# API routes
-# ---------------------------------------------------------------------------
+class ProjectContextIn(BaseModel):
+    repo_root: str
+    project_label: str
+    write_agents_md: bool = False
+    write_claude_md: bool = False
+
 
 @app.get("/api/config")
 async def get_config():
-    return load_config(_config_path()).model_dump()
+    return _read().model_dump()
 
 
-@app.post("/api/destinations")
-async def add_destination(dest: DestinationIn):
-    label = dest.label or None  # normalise empty string to None
-
-    # Validate: project destinations need a token
-    if label and not dest.token:
-        return {"status": "error", "error": "Token is required for project destinations."}
-
-    data = _read()
-    destinations: list = data.get("destinations", [])
-
-    if label is None:
-        # Local LightRAG — only one allowed; replace if it exists
-        destinations = [d for d in destinations if d.get("label")]  # drop existing local
-        destinations.insert(0, {"url": dest.url, "enabled": True})
-    else:
-        if any(d.get("label") == label for d in destinations):
-            return {"status": "error", "error": f"Label '{label}' already exists."}
-        destinations.append({
-            "url": dest.url,
-            "label": label,
-            "token": dest.token,
-            "enabled": True,
-            "display_name": dest.display_name,
-            "prefer_for_search": dest.prefer_for_search,
-            "allow_local_search_augmentation": dest.allow_local_search_augmentation,
-        })
-
-    data["destinations"] = destinations
-    _write(data)
-    return {"status": "ok"}
+@app.get("/api/routing")
+async def get_routing():
+    config = _read()
+    return {
+        "status": "ok",
+        "default_project": config.default_project,
+        "remote_only_mode": config.remote_only_mode,
+        "strict_project_routing": config.strict_project_routing,
+    }
 
 
-@app.delete("/api/destinations/{identifier}")
-async def delete_destination(identifier: str):
-    """identifier = 'local' for the local LightRAG, or a project label."""
-    data = _read()
-    if identifier == "local":
-        data["destinations"] = [
-            d for d in data.get("destinations", []) if d.get("label")
-        ]
-        # Clear default_project if it pointed to local (not applicable but safe)
-    else:
-        data["destinations"] = [
-            d for d in data.get("destinations", [])
-            if d.get("label") != identifier
-        ]
-        # Clear default_project if it was pointing to the removed label
-        if data.get("default_project") == identifier:
-            data.pop("default_project", None)
-
-    _write(data)
-    return {"status": "ok"}
-
-
-@app.patch("/api/destinations/{identifier}/toggle")
-async def toggle_destination(identifier: str):
-    data = _read()
-    for d in data.get("destinations", []):
-        is_target = (identifier == "local" and not d.get("label")) or \
-                    (d.get("label") == identifier)
-        if is_target:
-            d["enabled"] = not d.get("enabled", True)
-            break
-    _write(data)
+@app.put("/api/routing")
+async def set_routing(body: SettingsIn):
+    config = _read()
+    config.remote_only_mode = body.remote_only_mode
+    config.strict_project_routing = body.strict_project_routing
+    _write(config)
     return {"status": "ok"}
 
 
 @app.put("/api/default-project")
 async def set_default_project(body: DefaultProjectIn):
-    data = _read()
-    if body.label:
-        destinations = data.get("destinations", [])
-        if not any(d.get("label") == body.label for d in destinations):
-            return {"status": "error", "error": f"Label '{body.label}' not found."}
-        data["default_project"] = body.label
+    config = _read()
+    if body.label and not any(d.label == body.label for d in config.destinations if not d.is_local):
+        raise HTTPException(status_code=400, detail=f"Project '{body.label}' is not configured.")
+    config.default_project = body.label
+    _write(config)
+    return {"status": "ok"}
+
+
+@app.post("/api/destinations")
+async def add_destination(dest: DestinationIn):
+    config = _read()
+    label = dest.label or None
+    if label and not dest.token:
+        raise HTTPException(status_code=400, detail="Token is required for project destinations.")
+    if label is None:
+        config.destinations = [d for d in config.destinations if not d.is_local]
+        config.destinations.insert(0, DestinationConfig(url=dest.url, enabled=True, display_name=dest.display_name))
     else:
-        data.pop("default_project", None)
-    _write(data)
+        if any(d.label == label for d in config.destinations):
+            raise HTTPException(status_code=400, detail=f"Label '{label}' already exists.")
+        config.destinations.append(
+            DestinationConfig(url=dest.url, label=label, token=dest.token, enabled=True, display_name=dest.display_name)
+        )
+    _write(config)
     return {"status": "ok"}
 
 
-@app.put("/api/settings")
-async def set_settings(body: SettingsIn):
-    data = _read()
-    data["remote_only_mode"] = bool(body.remote_only_mode)
-    data["strict_project_routing"] = bool(body.strict_project_routing)
-    _write(data)
+@app.delete("/api/destinations/{identifier}")
+async def delete_destination(identifier: str):
+    config = _read()
+    if identifier == "local":
+        config.destinations = [d for d in config.destinations if not d.is_local]
+    else:
+        config.destinations = [d for d in config.destinations if d.label != identifier]
+        if config.default_project == identifier:
+            config.default_project = None
+    _write(config)
     return {"status": "ok"}
 
 
-@app.get("/api/local-openai-config")
-async def get_local_openai_config():
+@app.patch("/api/destinations/{identifier}/toggle")
+async def toggle_destination(identifier: str):
+    config = _read()
+    for destination in config.destinations:
+        if (identifier == "local" and destination.is_local) or destination.label == identifier:
+            destination.enabled = not destination.enabled
+            break
+    _write(config)
+    return {"status": "ok"}
+
+
+@app.get("/api/project-contexts")
+async def get_project_contexts():
+    config = _read()
+    return {"status": "ok", "project_contexts": [context.model_dump() for context in config.project_contexts]}
+
+
+@app.post("/api/project-contexts")
+async def upsert_project_context(body: ProjectContextIn):
+    config = _read()
+    result = register_project(
+        config=config,
+        repo_root=body.repo_root,
+        project_label=body.project_label,
+        config_path=_config_path(),
+        write_agents=body.write_agents_md,
+        write_claude=body.write_claude_md,
+    )
+    return {"status": "ok", **result}
+
+
+@app.delete("/api/project-contexts")
+async def delete_project_context(repo_root: str = Query(...)):
+    config = _read()
+    if not remove_project_context(config, repo_root):
+        raise HTTPException(status_code=404, detail="Project context not found.")
+    _write(config)
+    return {"status": "ok"}
+
+
+@app.post("/api/project-contexts/snippet")
+async def write_project_snippet(body: ProjectContextIn):
+    target_root = Path(body.repo_root)
+    targets: list[str] = []
+    if body.write_agents_md:
+        write_memory_snippet(target_root / "AGENTS.md", body.project_label)
+        targets.append("AGENTS.md")
+    if body.write_claude_md:
+        write_memory_snippet(target_root / "CLAUDE.md", body.project_label)
+        targets.append("CLAUDE.md")
+    return {"status": "ok", "targets": targets}
+
+
+@app.get("/api/local-runtime")
+async def get_local_runtime():
     env_values = read_dotenv(_local_env_path())
-    api_key = env_values.get("OPENAI_API_KEY", "")
     return {
         "status": "ok",
-        "openai_api_base": env_values.get("OPENAI_API_BASE", ""),
-        "has_openai_api_key": bool(api_key),
-        "masked_openai_api_key": _mask_secret(api_key),
         "env_path": str(_local_env_path()),
+        "openai_api_base": env_values.get("OPENAI_API_BASE", ""),
+        "has_openai_api_key": bool(env_values.get("OPENAI_API_KEY")),
+        "masked_openai_api_key": mask_secret(env_values.get("OPENAI_API_KEY", "")),
+        "llm_model": env_values.get("LLM_MODEL", ""),
+        "local_embedding_mode": env_values.get("LOCAL_EMBEDDING_MODE", ""),
+        "local_embedding_model": env_values.get("LOCAL_EMBEDDING_MODEL", ""),
+        "local_embedding_dim": env_values.get("LOCAL_EMBEDDING_DIM", ""),
+        "embedding_model": env_values.get("EMBEDDING_MODEL", ""),
+        "embedding_dim": env_values.get("EMBEDDING_DIM", ""),
+        "data_dir": str(_manager().data_dir),
     }
 
 
-@app.put("/api/local-openai-config")
-async def set_local_openai_config(body: LocalOpenAIConfigIn):
+@app.put("/api/local-runtime")
+async def set_local_runtime(body: LocalRuntimeIn):
     updates: dict[str, str | None] = {
         "OPENAI_API_BASE": (body.openai_api_base or "").strip() or None,
+        "LLM_MODEL": (body.llm_model or "").strip() or None,
+        "LOCAL_EMBEDDING_MODE": (body.local_embedding_mode or "").strip() or None,
+        "LOCAL_EMBEDDING_MODEL": (body.local_embedding_model or "").strip() or None,
+        "LOCAL_EMBEDDING_DIM": (body.local_embedding_dim or "").strip() or None,
+        "EMBEDDING_MODEL": (body.embedding_model or "").strip() or None,
+        "EMBEDDING_DIM": (body.embedding_dim or "").strip() or None,
     }
     incoming_key = (body.openai_api_key or "").strip()
     if incoming_key:
         updates["OPENAI_API_KEY"] = incoming_key
-
     update_dotenv(_local_env_path(), updates)
-    env_values = read_dotenv(_local_env_path())
-    return {
-        "status": "ok",
-        "restart_required": True,
-        "openai_api_base": env_values.get("OPENAI_API_BASE", ""),
-        "has_openai_api_key": bool(env_values.get("OPENAI_API_KEY")),
-        "masked_openai_api_key": _mask_secret(env_values.get("OPENAI_API_KEY", "")),
+    return await get_local_runtime()
+
+
+@app.get("/api/service/status")
+async def service_status():
+    manager = _manager()
+    config = _read()
+    state = manager.health_snapshot()
+    web_component = state["components"].get("web")
+    if web_component and web_component.get("running"):
+        web_component["healthy"] = True
+        if state["components"].get("lightrag", {}).get("healthy"):
+            state["status"] = "ok"
+    warnings: list[str] = []
+    if config.default_project and not any(d.label == config.default_project and d.enabled for d in config.destinations):
+        warnings.append("default_project points to a missing or disabled destination.")
+    if state["components"]["lightrag"]["port_conflict"]:
+        warnings.append("Port 9621 is occupied by a process not owned by the supervisor.")
+    if state["components"]["proxy"]["port_conflict"]:
+        warnings.append("Port 9622 is occupied by a process not owned by the supervisor.")
+    if state["components"]["web"]["port_conflict"]:
+        warnings.append("Port 8090 is occupied by a process not owned by the supervisor.")
+    activity = read_recent_activity(limit=1)
+    return {"status": "ok", "service": state, "warnings": warnings, "last_activity": activity[0] if activity else None}
+
+
+@app.get("/api/doctor")
+async def doctor():
+    return {"status": "ok", "doctor": _manager().doctor()}
+
+
+@app.get("/api/activity")
+async def activity(limit: int = Query(default=50, ge=1, le=200)):
+    return {"status": "ok", "items": read_recent_activity(limit=limit)}
+
+
+@app.get("/api/logs")
+async def logs(component: str = Query(default="lightrag"), lines: int = Query(default=100, ge=10, le=500)):
+    path_map = {
+        "proxy": get_local_log_dir() / "proxy.stdout.log",
+        "proxy_err": get_local_log_dir() / "proxy.stderr.log",
+        "lightrag": get_local_log_dir() / "lightrag.stdout.log",
+        "lightrag_err": get_local_log_dir() / "lightrag.stderr.log",
+        "web": get_local_log_dir() / "web.stdout.log",
+        "web_err": get_local_log_dir() / "web.stderr.log",
+        "audit": get_local_log_dir() / "client_audit.jsonl",
+        "runtime": get_local_log_dir() / "client_runtime.jsonl",
+        "health": get_local_log_dir() / "client_health.jsonl",
+        "supervisor": get_local_log_dir() / "supervisor.stdout.log",
+        "supervisor_err": get_local_log_dir() / "supervisor.stderr.log",
     }
+    path = path_map.get(component)
+    if not path:
+        raise HTTPException(status_code=400, detail="Unknown log component.")
+    return {"status": "ok", "component": component, "lines": tail_text(path, limit=lines)}
 
 
-# ---------------------------------------------------------------------------
-# Web UI — single-page HTML (no external dependencies)
-# ---------------------------------------------------------------------------
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
-_HTML = r"""<!DOCTYPE html>
+
+_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RAGConnect</title>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<title>RAGConnect Local</title>
 <style>
-  :root {
-    --bg:      #f5f6f8;
-    --surface: #ffffff;
-    --border:  #e0e3e8;
-    --accent:  #3b6ff5;
-    --accent2: #2d58d6;
-    --danger:  #e0423a;
-    --success: #1a8a55;
-    --local:   #0891b2;
-    --muted:   #6b7280;
-    --text:    #1a1d23;
-    --code-bg: #f0f2f5;
+  :root { --bg:#0f1117; --surface:#181c26; --muted:#93a0b3; --text:#edf2f7; --border:#2a3344; --accent:#3b82f6; --ok:#10b981; --warn:#f59e0b; --err:#ef4444; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 "Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:16px 24px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:16px; }
+  main { max-width:1200px; margin:0 auto; padding:24px; display:grid; gap:16px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:16px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; min-width:0; }
+  h1,h2,h3,p { margin:0; }
+  h1 { font-size:20px; }
+  h2 { font-size:15px; margin-bottom:6px; }
+  .muted { color:var(--muted); }
+  .section-note { color:var(--muted); margin-bottom:14px; }
+  .badge { display:inline-flex; align-items:center; max-width:100%; padding:2px 8px; border-radius:999px; font-size:12px; overflow-wrap:anywhere; word-break:break-word; }
+  .ok { background:rgba(16,185,129,.15); color:#86efac; }
+  .warn { background:rgba(245,158,11,.15); color:#fcd34d; }
+  .err { background:rgba(239,68,68,.15); color:#fca5a5; }
+  table { width:100%; border-collapse:collapse; table-layout:fixed; }
+  th,td { padding:8px 6px; border-bottom:1px solid rgba(255,255,255,.05); text-align:left; vertical-align:top; overflow-wrap:anywhere; word-break:break-word; }
+  input,select,textarea,button { width:100%; min-width:0; background:#0f172a; color:var(--text); border:1px solid var(--border); border-radius:10px; padding:10px 12px; }
+  button { cursor:pointer; background:var(--accent); border-color:var(--accent); font-weight:600; }
+  .row { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin-bottom:10px; align-items:start; }
+  .row-3 { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; margin-bottom:10px; align-items:start; }
+  .summary-list { display:grid; gap:10px; margin-bottom:14px; }
+  .summary-item { display:grid; gap:6px; min-width:0; }
+  .summary-label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  code { display:inline-flex; align-items:center; max-width:100%; background:#0b1220; border:1px solid rgba(255,255,255,.06); border-radius:10px; padding:8px; overflow-wrap:anywhere; word-break:break-word; white-space:pre-wrap; }
+  pre { background:#0b1220; border:1px solid rgba(255,255,255,.06); border-radius:10px; padding:12px; overflow:auto; white-space:pre-wrap; }
+  ul { margin:12px 0 0 18px; color:var(--muted); }
+  .status-line { margin-top:10px; color:var(--muted); font-size:12px; }
+  @media (max-width: 820px) {
+    .row, .row-3 { grid-template-columns:1fr; }
   }
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.5;
-  }
-
-  header {
-    background: var(--surface); border-bottom: 1px solid var(--border);
-    padding: 0 2rem; height: 56px; display: flex; align-items: center; gap: 12px;
-  }
-  header .logo { font-weight: 700; font-size: 1.1rem; letter-spacing: -.3px; }
-  header .sub  { color: var(--muted); font-size: 0.85rem; }
-  main { max-width: 960px; margin: 2rem auto; padding: 0 1.25rem; }
-
-  .card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; margin-bottom: 1.5rem; overflow: hidden;
-  }
-  .card-head {
-    padding: .875rem 1.5rem; border-bottom: 1px solid var(--border);
-    font-weight: 600; font-size: .9375rem;
-    display: flex; justify-content: space-between; align-items: center;
-  }
-  .card-body { padding: 1.5rem; }
-
-  table { width: 100%; border-collapse: collapse; }
-  th, td { padding: .5625rem .75rem; text-align: left; }
-  th {
-    font-size: .75rem; font-weight: 600; text-transform: uppercase;
-    letter-spacing: .05em; color: var(--muted); border-bottom: 1px solid var(--border);
-  }
-  tr:not(:last-child) td { border-bottom: 1px solid var(--border); }
-  td.url { font-size: .8125rem; color: var(--muted); max-width: 220px;
-           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  code {
-    font-family: "SF Mono", ui-monospace, monospace; font-size: .8rem;
-    background: var(--code-bg); padding: .1em .45em; border-radius: 4px;
-  }
-
-  .badge {
-    display: inline-block; padding: .175em .55em; border-radius: 5px;
-    font-size: .72rem; font-weight: 600; letter-spacing: .02em;
-  }
-  .badge-local   { background: #cffafe; color: var(--local); }
-  .badge-project { background: #ede9fe; color: #6d28d9; }
-  .badge-on      { background: #d1fadf; color: var(--success); }
-  .badge-off     { background: #f0f2f5; color: var(--muted); }
-  .badge-default { background: #fef3c7; color: #92400e; }
-
-  .btn {
-    padding: .4rem .875rem; border: none; border-radius: 7px;
-    font-size: .875rem; font-weight: 500; cursor: pointer; transition: .12s;
-    white-space: nowrap;
-  }
-  .btn-primary { background: var(--accent); color: #fff; }
-  .btn-primary:hover { background: var(--accent2); }
-  .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
-  .btn-ghost:hover { background: var(--bg); }
-  .btn-danger-ghost { background: transparent; border: 1px solid #fca5a5; color: var(--danger); }
-  .btn-danger-ghost:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
-  .btn-sm { padding: .25rem .6rem; font-size: .8125rem; }
-  .actions { display: flex; gap: .4rem; }
-
-  .divider { height: 1px; background: var(--border); margin: 1.25rem 0; }
-  .form-section { margin-bottom: 1.25rem; }
-  .form-section-title {
-    font-size: .78rem; font-weight: 600; color: var(--muted);
-    text-transform: uppercase; letter-spacing: .05em; margin-bottom: .625rem;
-  }
-  .form-row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: flex-end; }
-  .fg { display: flex; flex-direction: column; gap: .25rem; flex: 1; min-width: 120px; }
-  .fg.lg { min-width: 200px; }
-  .fg label { font-size: .78rem; font-weight: 500; color: var(--muted); }
-  .fg input, .fg select {
-    padding: .46rem .75rem; border: 1px solid var(--border); border-radius: 7px;
-    font-size: .9375rem; width: 100%; background: var(--surface); color: var(--text);
-    transition: border-color .15s;
-  }
-  .fg input:focus, .fg select:focus {
-    outline: none; border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(59,111,245,.15);
-  }
-  .fg input.optional { border-style: dashed; }
-
-  .alert {
-    padding: .7rem 1rem; border-radius: 8px; margin-bottom: 1.25rem;
-    font-size: .9rem; display: none; align-items: center; gap: .6rem;
-  }
-  .alert.show { display: flex; }
-  .alert-ok  { background: #d1fadf; color: #065f35; border: 1px solid #a7f3c0; }
-  .alert-err { background: #fee2e2; color: #7f1d1d; border: 1px solid #fca5a5; }
-
-  .hint { font-size: .8125rem; color: var(--muted); margin-top: .375rem; }
-  .empty-row td { color: var(--muted); text-align: center; padding: 2rem; }
 </style>
 </head>
 <body>
-
 <header>
-  <span class="logo">RAGConnect</span>
-  <span class="sub">Client Gateway Configuration</span>
+  <div><h1>RAGConnect Local</h1><p class="muted">Routing, project contexts, runtime, health and logs.</p></div>
+  <button style="width:auto" onclick="loadAll()">Refresh</button>
 </header>
-
 <main>
-
-  <div id="alert" class="alert" role="alert"></div>
-
-  <!-- ==================== Destinations ==================== -->
-  <div class="card">
-    <div class="card-head">
-      <span>Memory Destinations</span>
-      <span id="dest-count" style="font-size:.8125rem;font-weight:400;color:var(--muted)"></span>
-    </div>
-
-    <!-- table -->
-    <div style="padding:0">
-      <table>
-        <thead>
-          <tr>
-            <th>Type</th>
-            <th>Label</th>
-            <th>URL</th>
-            <th>Token</th>
-            <th>Status</th>
-            <th style="width:160px"></th>
-          </tr>
-        </thead>
-        <tbody id="dest-tbody">
-          <tr class="empty-row"><td colspan="6">Loading…</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- add form -->
-    <div style="padding:1.25rem 1.5rem;border-top:1px solid var(--border)">
-      <div class="form-section">
-        <div class="form-section-title">Add Local LightRAG</div>
-        <p class="hint" style="margin-bottom:.75rem">
-          Requests go directly to LightRAG's native API — no label, no token needed.
-          This becomes the default destination when no <code>project_label</code> is given.
-        </p>
-        <form id="add-local-form">
-          <div class="form-row">
-            <div class="fg lg">
-              <label>LightRAG URL</label>
-              <input name="url" placeholder="http://127.0.0.1:9621" required>
-            </div>
-            <button type="submit" class="btn btn-primary">Set Local LightRAG</button>
-          </div>
-        </form>
-        <p class="hint">This changes only the local destination URL. OpenAI-compatible credentials are configured below.</p>
+  <div class="grid">
+    <section class="card">
+      <h2>Service Health</h2>
+      <p class="section-note">Supervisor view of the local stack. Components may briefly show as starting while they warm up.</p>
+      <div id="service-health" class="muted">Loading...</div>
+    </section>
+    <section class="card">
+      <h2>Routing</h2>
+      <p class="section-note">Controls where unlabeled memory requests go and how strict project routing should be.</p>
+      <div id="routing-view" class="muted">Loading...</div>
+      <div class="row">
+        <input id="routing-default" placeholder="default_project label">
+        <select id="routing-remote">
+          <option value="false">Local fallback enabled</option>
+          <option value="true">Remote only mode</option>
+        </select>
       </div>
-
-      <div class="form-section">
-        <div class="form-section-title">Local OpenAI-Compatible Settings</div>
-        <p class="hint" style="margin-bottom:.75rem">
-          Stored in <code id="local-env-path">~/.ragconnect/.env</code>. Leave the API key blank to keep the current value.
-          Restart the local stack after saving to apply changes.
-        </p>
-        <form id="local-openai-form">
-          <div class="form-row">
-            <div class="fg lg">
-              <label>OpenAI API Base</label>
-              <input id="local-openai-base" name="openai_api_base" class="optional" placeholder="https://api.openai.com/v1">
-            </div>
-            <div class="fg lg">
-              <label>OpenAI API Key</label>
-              <input id="local-openai-key" name="openai_api_key" type="password" placeholder="Leave blank to keep current" autocomplete="new-password">
-            </div>
-            <button type="submit" class="btn btn-primary">Save OpenAI Settings</button>
-          </div>
-        </form>
-        <p id="local-openai-status" class="hint" style="margin-top:.625rem">Loading current local credentials…</p>
+      <div class="row">
+        <select id="routing-strict">
+          <option value="true">Strict routing enabled</option>
+          <option value="false">Fallback when project is unavailable</option>
+        </select>
+        <button onclick="saveRouting()">Save routing</button>
       </div>
-
-      <div class="divider"></div>
-
-      <div class="form-section">
-        <div class="form-section-title">Add Project Destination</div>
-        <p class="hint" style="margin-bottom:.75rem">
-          Requests are proxied through the project's Server Gateway with Bearer-token auth.
-        </p>
-        <form id="add-project-form">
-          <div class="form-row">
-            <div class="fg">
-              <label>Label</label>
-              <input name="label" placeholder="kettle" required autocomplete="off">
-            </div>
-            <div class="fg lg">
-              <label>Server Gateway URL</label>
-              <input name="url" placeholder="https://kettle-memory.example.com" required>
-            </div>
-            <div class="fg lg">
-              <label>Access Token</label>
-              <input name="token" placeholder="tok_…" type="password" required autocomplete="new-password">
-            </div>
-            <button type="submit" class="btn btn-primary">Add Project</button>
-          </div>
-        </form>
+    </section>
+    <section class="card">
+      <h2>Local Runtime</h2>
+      <p class="section-note">Current local LLM and embedding runtime. Long values are shown in wrapped blocks below.</p>
+      <div id="runtime-view" class="muted">Loading...</div>
+      <div class="row">
+        <input id="runtime-base" placeholder="OPENAI_API_BASE">
+        <input id="runtime-model" placeholder="LLM_MODEL">
       </div>
-    </div>
+      <div class="row">
+        <input id="runtime-key" placeholder="OPENAI_API_KEY (optional)">
+        <button onclick="saveRuntime()">Save runtime</button>
+      </div>
+    </section>
   </div>
-
-  <!-- ==================== Default Project ==================== -->
-  <div class="card">
-    <div class="card-head">
-      <span>Default Project</span>
-      <span style="font-size:.8125rem;font-weight:400;color:var(--muted)">when no project_label is specified</span>
-    </div>
-    <div class="card-body">
-      <p class="hint" style="margin-bottom:1rem">
-        When the AI calls a memory tool without an explicit <code>project_label</code>,
-        it routes here. Set this to the project you are currently working in.
-        Leave as <em>None</em> to fall back to local LightRAG by default.
-      </p>
-      <div class="form-row" style="align-items:center">
-        <div class="fg" style="max-width:280px">
-          <label>Default destination</label>
-          <select id="default-project-select">
-            <option value="">— None (use local LightRAG) —</option>
-          </select>
-        </div>
-        <button type="button" class="btn btn-primary" onclick="saveDefaultProject()">Save</button>
+  <div class="grid">
+    <section class="card">
+      <h2>Destinations</h2>
+      <p class="section-note">Configured memory endpoints. Leave label empty to replace the local destination entry.</p>
+      <div class="row-3">
+        <input id="dest-label" placeholder="project label or empty">
+        <input id="dest-url" placeholder="destination URL">
+        <input id="dest-token" placeholder="token for project memory">
       </div>
-    </div>
+      <button onclick="addDestination()">Add destination</button>
+      <div id="destinations" style="margin-top:12px"></div>
+    </section>
+    <section class="card">
+      <h2>Project Contexts</h2>
+      <p class="section-note">Registers a repository path to a project label for automatic memory routing. Optional flags write the memory snippet into project docs.</p>
+      <div class="row">
+        <input id="ctx-root" placeholder="repo_root">
+        <input id="ctx-label" placeholder="project_label">
+      </div>
+      <div class="row-3">
+        <select id="ctx-agents">
+          <option value="false">Write AGENTS.md: no</option>
+          <option value="true">Write AGENTS.md: yes</option>
+        </select>
+        <select id="ctx-claude">
+          <option value="false">Write CLAUDE.md: no</option>
+          <option value="true">Write CLAUDE.md: yes</option>
+        </select>
+        <button onclick="saveProjectContext()">Register project</button>
+      </div>
+      <div id="project-contexts" style="margin-top:12px"></div>
+    </section>
   </div>
-
+  <section class="card">
+    <h2>Recent Activity</h2>
+    <p class="section-note">Last memory routing and audit events recorded by the local gateway.</p>
+    <div id="activity" class="muted">Loading...</div>
+  </section>
+  <section class="card">
+    <h2>Logs</h2>
+    <p class="section-note">Inspect stdout or audit logs for the local components.</p>
+    <div class="row">
+      <select id="log-component">
+        <option value="lightrag">lightrag</option>
+        <option value="proxy">proxy</option>
+        <option value="web">web</option>
+        <option value="audit">audit</option>
+        <option value="supervisor">supervisor</option>
+      </select>
+      <button onclick="loadLogs()">Load logs</button>
+    </div>
+    <pre id="logs">No logs loaded.</pre>
+  </section>
 </main>
-
 <script>
-const $ = id => document.getElementById(id);
-
-function flash(msg, type) {
-  const el = $('alert');
-  el.textContent = msg;
-  el.className = `alert show alert-${type === 'ok' ? 'ok' : 'err'}`;
-  clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.remove('show'), 4500);
+async function j(url, options) { const r = await fetch(url, options); const d = await r.json(); if (!r.ok) throw new Error(d.detail || d.error || JSON.stringify(d)); return d; }
+function esc(v) { return String(v ?? '').replace(/[&<>"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s])); }
+function badge(ok, label) { const cls = ok === 'ok' ? 'ok' : ok === 'warning' || ok === 'degraded' ? 'warn' : ok === 'disabled' ? 'warn' : 'err'; return `<span class="badge ${cls}">${esc(label || ok)}</span>`; }
+function summaryItem(label, value) { return `<div class="summary-item"><div class="summary-label">${esc(label)}</div><code>${esc(value)}</code></div>`; }
+function componentState(item) {
+  if (item.healthy) return { kind:'ok', label:'healthy' };
+  if (item.running) return { kind:'warning', label:'starting' };
+  if (item.port_conflict) return { kind:'error', label:'conflict' };
+  return { kind:'error', label:'down' };
 }
-
-function esc(s) {
-  return String(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+async function loadAll() {
+  await Promise.all([loadConfig(), loadRouting(), loadRuntime(), loadHealth(), loadContexts(), loadActivity()]);
+  await loadLogs();
 }
-
-function mask(t) {
-  return t && t.length > 10
-    ? t.slice(0, 6) + '\u2022\u2022\u2022\u2022' + t.slice(-4)
-    : '\u2022'.repeat(8);
+async function loadConfig() {
+  const cfg = await j('/api/config');
+  const rows = (cfg.destinations || []).map(d => `<tr><td>${esc(d.label || 'local')}</td><td>${esc(d.url)}</td><td>${badge(d.enabled ? 'ok':'error', d.enabled ? 'enabled':'disabled')}</td></tr>`).join('');
+  document.getElementById('destinations').innerHTML = `<table><thead><tr><th>Label</th><th>URL</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="3" class="muted">No destinations</td></tr>'}</tbody></table>`;
 }
-
-function renderLocalOpenAIStatus(cfg) {
-  $('local-env-path').textContent = cfg.env_path || '~/.ragconnect/.env';
-  $('local-openai-base').value = cfg.openai_api_base || '';
-  $('local-openai-key').value = '';
-  $('local-openai-key').placeholder = cfg.has_openai_api_key
-    ? `Current: ${cfg.masked_openai_api_key || 'configured'} (leave blank to keep)`
-    : 'Set a new API key';
-  $('local-openai-status').textContent = cfg.has_openai_api_key
-    ? `API key configured: ${cfg.masked_openai_api_key}`
-    : 'API key is not configured yet.';
+async function loadRouting() {
+  const data = await j('/api/routing');
+  document.getElementById('routing-default').value = data.default_project || '';
+  document.getElementById('routing-remote').value = String(data.remote_only_mode);
+  document.getElementById('routing-strict').value = String(data.strict_project_routing);
+  document.getElementById('routing-view').innerHTML = `<div class="summary-list">${summaryItem('Default project', data.default_project || 'local fallback')}${summaryItem('Remote only mode', data.remote_only_mode ? 'enabled' : 'disabled')}${summaryItem('Strict project routing', data.strict_project_routing ? 'enabled' : 'disabled')}</div>`;
 }
-
-async function loadLocalOpenAIConfig() {
-  const r = await fetch('/api/local-openai-config');
-  const d = await r.json();
-  if (d.status !== 'ok') {
-    throw new Error(d.error || 'Failed to load local OpenAI settings.');
-  }
-  renderLocalOpenAIStatus(d);
+async function loadRuntime() {
+  const data = await j('/api/local-runtime');
+  document.getElementById('runtime-base').value = data.openai_api_base || '';
+  document.getElementById('runtime-model').value = data.llm_model || '';
+  document.getElementById('runtime-key').value = '';
+  document.getElementById('runtime-view').innerHTML = `<div class="summary-list">${summaryItem('OpenAI API base', data.openai_api_base || 'not set')}${summaryItem('LLM model', data.llm_model || 'not set')}${summaryItem('Embedding model', data.local_embedding_model || data.embedding_model || 'n/a')}${summaryItem('Embedding dim', data.local_embedding_dim || data.embedding_dim || 'n/a')}${summaryItem('API key', data.masked_openai_api_key || 'not set')}</div>`;
 }
-
-// ---- render destinations table ----
-function renderDestinations(dests, defaultProject) {
-  const tbody = $('dest-tbody');
-  const count = dests.length;
-  $('dest-count').textContent = count ? `${count} configured` : '';
-
-  if (!count) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No destinations yet. Add one below.</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = dests.map(d => {
-    const isLocal   = !d.label;
-    const id        = isLocal ? 'local' : esc(d.label);
-    const typeBadge = isLocal
-      ? '<span class="badge badge-local">local</span>'
-      : '<span class="badge badge-project">project</span>';
-    const labelCell = isLocal ? '<span style="color:var(--muted)">—</span>' : `<strong>${esc(d.label)}</strong>`;
-    const tokenCell = isLocal
-      ? '<span style="color:var(--muted);font-size:.8125rem">native API</span>'
-      : `<code>${esc(mask(d.token || ''))}</code>`;
-    const statusBadge = d.enabled
-      ? '<span class="badge badge-on">enabled</span>'
-      : '<span class="badge badge-off">disabled</span>';
-    const defBadge = (!isLocal && d.label === defaultProject)
-      ? ' <span class="badge badge-default">default</span>' : '';
-
-    return `<tr>
-      <td>${typeBadge}</td>
-      <td>${labelCell}${defBadge}</td>
-      <td class="url" title="${esc(d.url)}">${esc(d.url)}</td>
-      <td>${tokenCell}</td>
-      <td>${statusBadge}</td>
-      <td>
-        <div class="actions">
-          <button class="btn btn-sm btn-ghost" onclick="toggle('${id}')">
-            ${d.enabled ? 'Disable' : 'Enable'}
-          </button>
-          <button class="btn btn-sm btn-danger-ghost" onclick="remove('${id}')">Remove</button>
-        </div>
-      </td>
-    </tr>`;
+async function loadHealth() {
+  const data = await j('/api/service/status');
+  const comps = Object.entries(data.service.components).map(([name, item]) => {
+    const state = componentState(item);
+    return `<tr><td>${esc(name)}</td><td>${badge(state.kind, state.label)}</td><td>${esc(item.pid || '-')}</td><td>${esc(item.port)}</td><td>${esc(item.restart_count || 0)}</td></tr>`;
   }).join('');
+  const warns = (data.warnings || []).map(w => `<li>${esc(w)}</li>`).join('');
+  document.getElementById('service-health').innerHTML = `<table><thead><tr><th>Component</th><th>Status</th><th>PID</th><th>Port</th><th>Restarts</th></tr></thead><tbody>${comps}</tbody></table>${warns ? `<ul>${warns}</ul>` : ''}<div class="status-line">Overall status: ${esc(data.service.status || 'unknown')}</div>`;
 }
-
-// ---- load config ----
-async function load() {
-  try {
-    const r   = await fetch('/api/config');
-    const cfg = await r.json();
-    const dests = cfg.destinations || [];
-    const def   = cfg.default_project || '';
-
-    renderDestinations(dests, def);
-
-    // Populate default-project dropdown (project destinations only)
-    const sel = $('default-project-select');
-    const projects = dests.filter(d => d.label);
-    sel.innerHTML = '<option value="">— None (use local LightRAG) —</option>' +
-      projects.filter(p => p.enabled).map(p =>
-        `<option value="${esc(p.label)}"${p.label === def ? ' selected' : ''}>${esc(p.label)}</option>`
-      ).join('');
-    await loadLocalOpenAIConfig();
-  } catch(e) {
-    flash('Could not load config: ' + e.message, 'err');
-  }
+async function loadContexts() {
+  const data = await j('/api/project-contexts');
+  const rows = (data.project_contexts || []).map(item => `<tr><td>${esc(item.project_label)}</td><td>${esc(item.repo_root)}</td><td>${badge(item.enabled ? 'ok':'error', item.enabled ? 'enabled':'disabled')}</td></tr>`).join('');
+  document.getElementById('project-contexts').innerHTML = `<table><thead><tr><th>Label</th><th>Repo Root</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="3" class="muted">No project contexts registered yet</td></tr>'}</tbody></table>`;
 }
-
-// ---- add local ----
-$('add-local-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  const r = await fetch('/api/destinations', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ url: fd.get('url') })  // no label, no token
-  });
-  const d = await r.json();
-  if (d.status === 'ok') { e.target.reset(); load(); flash('Local LightRAG configured.', 'ok'); }
-  else flash(d.error || 'Failed.', 'err');
-});
-
-// ---- add project ----
-$('add-project-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  const r = await fetch('/api/destinations', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ url: fd.get('url'), label: fd.get('label'), token: fd.get('token') })
-  });
-  const d = await r.json();
-  if (d.status === 'ok') { e.target.reset(); load(); flash('Project destination added.', 'ok'); }
-  else flash(d.error || 'Failed.', 'err');
-});
-
-$('local-openai-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  const r = await fetch('/api/local-openai-config', {
-    method: 'PUT',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({
-      openai_api_base: fd.get('openai_api_base'),
-      openai_api_key: fd.get('openai_api_key'),
-    })
-  });
-  const d = await r.json();
-  if (d.status === 'ok') {
-    renderLocalOpenAIStatus(d);
-    flash('Local OpenAI settings saved. Restart the local stack to apply them.', 'ok');
-  } else {
-    flash(d.error || 'Failed to save local OpenAI settings.', 'err');
-  }
-});
-
-// ---- toggle ----
-async function toggle(id) {
-  const r = await fetch(`/api/destinations/${encodeURIComponent(id)}/toggle`, { method: 'PATCH' });
-  const d = await r.json();
-  if (d.status === 'ok') load();
-  else flash(d.error || 'Failed to toggle.', 'err');
+async function loadActivity() {
+  const data = await j('/api/activity?limit=10');
+  document.getElementById('activity').innerHTML = (data.items || []).length ? `<pre>${esc(JSON.stringify(data.items || [], null, 2))}</pre>` : `<div class="muted">No memory activity has been recorded yet.</div>`;
 }
-
-// ---- remove ----
-async function remove(id) {
-  const name = id === 'local' ? 'local LightRAG' : `"${id}"`;
-  if (!confirm(`Remove ${name}?`)) return;
-  const r = await fetch(`/api/destinations/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  const d = await r.json();
-  if (d.status === 'ok') { load(); flash(`${name} removed.`, 'ok'); }
-  else flash(d.error || 'Failed to remove.', 'err');
+async function loadLogs() {
+  const component = document.getElementById('log-component').value;
+  const data = await j('/api/logs?component=' + encodeURIComponent(component) + '&lines=100');
+  document.getElementById('logs').textContent = (data.lines || []).join('\\n') || 'No log lines.';
 }
-
-// ---- default project ----
-async function saveDefaultProject() {
-  const label = $('default-project-select').value || null;
-  const r = await fetch('/api/default-project', {
-    method: 'PUT', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ label })
-  });
-  const d = await r.json();
-  if (d.status === 'ok') {
-    load();
-    flash(label ? `Default project set to "${label}".` : 'Default cleared — using local LightRAG.', 'ok');
-  } else flash(d.error || 'Failed.', 'err');
+async function saveRouting() {
+  const defaultProject = document.getElementById('routing-default').value.trim() || null;
+  await j('/api/routing', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ remote_only_mode: document.getElementById('routing-remote').value === 'true', strict_project_routing: document.getElementById('routing-strict').value === 'true' }) });
+  await j('/api/default-project', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ label: defaultProject }) });
+  await loadRouting();
+  await loadHealth();
 }
-
-load();
+async function saveRuntime() {
+  await j('/api/local-runtime', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ openai_api_base: document.getElementById('runtime-base').value, llm_model: document.getElementById('runtime-model').value, openai_api_key: document.getElementById('runtime-key').value }) });
+  await loadRuntime();
+}
+async function addDestination() {
+  await j('/api/destinations', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ label: document.getElementById('dest-label').value || null, url: document.getElementById('dest-url').value, token: document.getElementById('dest-token').value || null }) });
+  document.getElementById('dest-label').value=''; document.getElementById('dest-url').value=''; document.getElementById('dest-token').value='';
+  await loadConfig();
+}
+async function saveProjectContext() {
+  await j('/api/project-contexts', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ repo_root: document.getElementById('ctx-root').value, project_label: document.getElementById('ctx-label').value, write_agents_md: document.getElementById('ctx-agents').value === 'true', write_claude_md: document.getElementById('ctx-claude').value === 'true' }) });
+  document.getElementById('ctx-root').value=''; document.getElementById('ctx-label').value='';
+  await loadContexts();
+}
+setInterval(() => { loadHealth().catch(() => {}); loadActivity().catch(() => {}); }, 15000);
+loadAll();
 </script>
 </body>
 </html>"""
@@ -679,20 +524,14 @@ async def index():
     return _HTML
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
 def main_sync() -> None:
     import uvicorn
+
     host = os.environ.get("RAGCONNECT_WEB_HOST", "127.0.0.1")
     port = int(os.environ.get("RAGCONNECT_WEB_PORT", "8090"))
     allow_remote = os.environ.get("RAGCONNECT_ALLOW_REMOTE_WEB", "false").lower() == "true"
     if host not in {"127.0.0.1", "localhost"} and not allow_remote:
-        raise RuntimeError(
-            "Remote bind is disabled by default. Set RAGCONNECT_ALLOW_REMOTE_WEB=true to override."
-        )
-    print(f"RAGConnect Web UI →  http://{host}:{port}")
+        raise RuntimeError("Remote bind is disabled by default. Set RAGCONNECT_ALLOW_REMOTE_WEB=true to override.")
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 

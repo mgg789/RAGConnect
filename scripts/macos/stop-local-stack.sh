@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
-# RAGConnect local stack stopper for macOS
-# Kills processes listening on LightRAG (9621) and proxy (9622) ports.
-
 set -euo pipefail
 
-PORTS=("${@:-9621 9622 8090}")
+RAG_HOME="${HOME}/.ragconnect"
+CLI_EXE="$RAG_HOME/.venv/bin/ragconnect-local-service"
+PYTHON_EXE="$RAG_HOME/.venv/bin/python3"
+REPO_ROOT="${PWD}"
 
-for port in "${PORTS[@]}"; do
-  pids=$(lsof -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)
-  if [[ -n "$pids" ]]; then
-    echo "[RAGConnect] Stopping process(es) on port $port: $pids"
-    kill -TERM $pids 2>/dev/null || true
-  else
-    echo "[RAGConnect] Nothing listening on port $port"
-  fi
-done
+if [[ -x "$CLI_EXE" ]]; then
+  "$CLI_EXE" stop --repo-root "$REPO_ROOT" --rag-home "$RAG_HOME"
+elif [[ -x "$PYTHON_EXE" ]]; then
+  "$PYTHON_EXE" -m client_gateway.local_service stop --repo-root "$REPO_ROOT" --rag-home "$RAG_HOME"
+else
+  echo "[RAGConnect] local service executable not found under $RAG_HOME/.venv" >&2
+  exit 1
+fi

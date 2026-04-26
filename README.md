@@ -49,8 +49,8 @@ What `install-local-stack.ps1` does:
 - installs the project, LightRAG API, and embedding runtime
 - writes `~/.ragconnect/.env` and `client_config.yaml`
 - optionally installs MCP for Codex or Claude Desktop
-- optionally enables auto-start
-- after installation you can later edit the local OpenAI-compatible base URL and API key in `ragconnect-web`
+- optionally enables auto-start via the local supervisor
+- after installation you can later edit local routing, project contexts, runtime settings, health, and logs in `ragconnect-web`
 
 ```powershell
 powershell -File scripts/windows/install-local-stack.ps1 `
@@ -78,7 +78,7 @@ What `install-local-stack.sh` does:
 - writes `~/.ragconnect/.env` (`chmod 600`) and `client_config.yaml`
 - optionally installs MCP for Codex or Claude Desktop
 - optionally enables auto-start via `~/Library/LaunchAgents/com.ragconnect.local-stack.plist`
-- after installation you can later edit the local OpenAI-compatible base URL and API key in `ragconnect-web`
+- after installation you can later edit local routing, project contexts, runtime settings, health, and logs in `ragconnect-web`
 
 ```bash
 bash scripts/macos/install-local-stack.sh \
@@ -185,7 +185,28 @@ docker compose exec server-gateway ragconnect-server token create --role write -
 - a project gateway with token auth
 
 So the Docker configuration mirrors the working setup already validated in a real environment.
-The server-side `.env` can also be updated later from the admin UI (`/ui/configs`) for `OPENAI_API_BASE` and `OPENAI_API_KEY`; restart the server stack afterwards.
+The server-side `.env` can also be updated later from the admin UI (`/ui/configs`) for `OPENAI_API_BASE`, `OPENAI_API_KEY`, `LLM_MODEL`, and embedding settings. Apply now happens through the host helper daemon:
+
+```bash
+ragconnect-host-helper daemon --repo-root /path/to/RAGConnect
+```
+
+### Troubleshooting: OpenAI 403 region error
+
+If inserts fail with `unsupported_country_region_territory`, the upstream LLM API rejected the request from the server's country, region, or territory. This is not a RAGConnect token error.
+
+Fix it by using an OpenAI-compatible provider that is available from the server:
+
+1. Set `OPENAI_API_BASE` in `.env` or in `/ui/configs`.
+2. Set the matching `OPENAI_API_KEY`.
+3. Set `LLM_MODEL` to a model supported by that endpoint.
+4. Apply the runtime:
+
+```bash
+ragconnect-host-helper daemon --repo-root /path/to/RAGConnect
+```
+
+With the default Docker setup, embeddings can remain local via `LOCAL_EMBEDDING_MODE=true`; only the chat/completion LLM endpoint needs to be reachable.
 
 ## Memory model
 
@@ -208,7 +229,7 @@ They are intentionally written so the agent treats memory as an external long-te
 - default local embeddings: `intfloat/multilingual-e5-small`, dimension `384`
 - direct Codex MCP entrypoint: `python -m client_gateway.mcp_server`
 - `pyproject.toml` uses `setuptools.build_meta`, so editable install works normally
-- current Windows auto-start uses the `Startup` folder
+- current Windows auto-start uses the `Startup` folder and launches the local supervisor
 
 ## How it works
 

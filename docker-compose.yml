@@ -12,7 +12,7 @@ services:
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_API_BASE: ${OPENAI_API_BASE:-https://api.openai.com/v1}
-      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_MODEL: ${LLM_MODEL:-gpt-5.4-mini}
       LOCAL_EMBEDDING_MODE: ${LOCAL_EMBEDDING_MODE:-true}
       LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
       LOCAL_EMBEDDING_DIM: ${LOCAL_EMBEDDING_DIM:-384}
@@ -45,9 +45,16 @@ services:
       - "8080:8080"
     volumes:
       - server_data:/data
+      - ./.env:/app/.env
+      - ./control:/control
+      - ./backups:/backups
     environment:
       LIGHTRAG_URL: http://lightrag:9621
       TOKEN_STORE_PATH: /data/server_tokens.yaml
+      RAGCONNECT_ENV_FILE: /app/.env
+      RAGCONNECT_CONTROL_DIR: /control
+      RAGCONNECT_BACKUP_DIR: /backups
+      RAGCONNECT_SERVER_LOG_DIR: /data/logs
       RAGCONNECT_ADMIN_USERNAME: ${RAGCONNECT_ADMIN_USERNAME:-admin}
       RAGCONNECT_ADMIN_PASSWORD: ${RAGCONNECT_ADMIN_PASSWORD}
       RAGCONNECT_HTTP_TIMEOUT_SECONDS: ${RAGCONNECT_HTTP_TIMEOUT_SECONDS:-600}

@@ -1,55 +1,34 @@
-"""MCP server exposing memory tools to AI clients (Claude Code, Cursor, Codex, …).
-
-Run via stdio (the standard MCP transport):
-
-    python -m client_gateway.mcp_server
-    # or, after pip install -e .:
-    ragconnect-client
-
-How the AI learns about memory
--------------------------------
-1. MCP Prompts  — `memory-context` prompt injects available destinations and
-   usage rules into the AI context at session start.
-
-2. CLAUDE.md    — Project-level instructions that tell Claude which project_label
-   to use when working in a specific repository (see config/CLAUDE.md.example).
-"""
-
 from __future__ import annotations
 
 import asyncio
 import json
 import os
+import time
 from pathlib import Path
 
 import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from client_gateway.config import find_local, load_config
+from client_gateway.audit import append_audit
+from client_gateway.config import find_local, find_project, load_config
+from client_gateway.context import resolve_project_context, roots_from_uris
+from client_gateway.project_registry import register_project
 from client_gateway.router import Router
 from client_gateway.server_client import ServerGatewayClient
 from shared.lightrag_client import LightRAGClient
-from shared.models import HealthResponse, HealthStatus, ListProjectsResponse, ProjectInfo
+from shared.models import HealthResponse, HealthStatus, ProjectInfo
 
 server = Server("ragconnect-client-gateway")
 PROMPTS_DIR = Path(os.environ.get("RAGCONNECT_PROMPTS_DIR", "config/prompts"))
 
-
-# ---------------------------------------------------------------------------
-# Prompts — teach the AI about the memory system
-# ---------------------------------------------------------------------------
 
 @server.list_prompts()
 async def list_prompts() -> list[types.Prompt]:
     return [
         types.Prompt(
             name="memory-context",
-            description=(
-                "Injects the current memory configuration into the AI's context: "
-                "available destinations, default project, and rules for proactive "
-                "memory use."
-            ),
+            description="Inject current memory configuration, resolved context, and usage rules.",
             arguments=[],
         )
     ]
@@ -60,78 +39,56 @@ async def get_prompt(name: str, arguments: dict | None) -> types.GetPromptResult
     if name != "memory-context":
         raise ValueError(f"Unknown prompt: {name}")
 
+    del arguments
     config = load_config()
     local = find_local(config)
     projects = [d for d in config.destinations if not d.is_local]
+    roots = await _current_roots()
+    resolved = resolve_project_context(config, None, roots=roots)
 
     lines: list[str] = _load_prompt_parts("global")
+    lines += [
+        "### Resolved context",
+        f"- Source: `{resolved.source}`",
+        f"- Resolved project_label: `{resolved.resolved_project_label or 'local'}`",
+        f"- Roots seen: {', '.join(f'`{root}`' for root in resolved.roots) if resolved.roots else 'none'}",
+        "",
+    ]
 
-    # --- local destination ---
     if local:
         lines += [
-            "### Local LightRAG (default when no label given)",
+            "### Local memory",
             f"- URL: `{local.url}`",
-            f"- Status: {'enabled' if local.enabled else 'disabled'}",
-            "- Access: **native API** (no auth, direct LightRAG calls)",
-            "",
-        ]
-    elif not config.remote_only_mode:
-        lines += [
-            "### Local LightRAG",
-            "- **Not configured.** Add one in `ragconnect-web` to enable local memory.",
+            f"- Status: `{'enabled' if local.enabled else 'disabled'}`",
             "",
         ]
     else:
-        lines += [
-            "### Local LightRAG",
-            "- Remote-only mode is enabled. Local memory is intentionally disabled.",
-            "",
-        ]
+        lines += ["### Local memory", "- Not configured.", ""]
 
-    # --- project destinations ---
+    lines.append("### Project destinations")
     if projects:
-        lines.append("### Project destinations")
-        for p in projects:
-            marker = " ← **default**" if p.label == config.default_project else ""
-            status = "enabled" if p.enabled else "disabled"
-            lines.append(f"- `{p.label}` ({status}){marker}")
-        lines.append("")
+        for project in projects:
+            marker = " <- default" if project.label == config.default_project else ""
+            lines.append(f"- `{project.label}` ({'enabled' if project.enabled else 'disabled'}){marker}")
     else:
-        lines += ["### Project destinations", "- None configured.", ""]
+        lines.append("- None configured.")
+    lines.append("")
 
-    # --- routing hint ---
-    if config.default_project:
-        lines += [
-            f"### Default project: `{config.default_project}`",
-            f"When no `project_label` is given, requests route to **`{config.default_project}`** "
-            "(via Server Gateway). Omit the label for the default project.",
-            "",
-        ]
+    lines.append("### Registered project contexts")
+    if config.project_contexts:
+        for context in config.project_contexts:
+            lines.append(
+                f"- `{context.project_label}` => `{context.repo_root}` ({'enabled' if context.enabled else 'disabled'})"
+            )
     else:
-        lines += [
-            "### Routing",
-            "No default project set. Omitting `project_label` routes to the **local LightRAG** "
-            "(native API, no auth).",
-            "",
-        ]
+        lines.append("- None registered.")
+    lines.append("")
 
-    # --- rules ---
     lines += _load_prompt_parts("rules")
-    lines += [
-        "### Rules",
-        "- **Always search** before answering questions about architecture, decisions, or past work.",
-        "- **Always write** after: design decisions, agreed constraints, discovered issues, "
-        "completed milestones.",
-        "- Use the project label that matches your current working context.",
-        "- For personal notes, omit `project_label` only when local memory is configured.",
-        "- Never silently skip writing — report the error rather than dropping information.",
-        "",
-        f"### Available memory namespaces",
-        "- `Основная_локальная`" if local else "- `Основная_локальная` (disabled)",
-    ]
-    lines += [f"- `{p.label}`" for p in projects if p.label]
-    lines += [
-    ]
+    if resolved.warnings:
+        lines.append("### Warnings")
+        lines += [f"- {warning}" for warning in resolved.warnings]
+        lines.append("")
 
     return types.GetPromptResult(
         description="Memory system context and usage rules",
@@ -144,240 +101,149 @@ async def get_prompt(name: str, arguments: dict | None) -> types.GetPromptResult
     )
 
 
-# ---------------------------------------------------------------------------
-# Tool definitions
-# ---------------------------------------------------------------------------
-
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
     config = load_config()
-    if config.default_project:
-        default_hint = f"If omitted, routes to the default project ('{config.default_project}')."
-    else:
-        default_hint = "If omitted, routes to the local LightRAG (native API, no auth)."
-
+    default_hint = (
+        f"If omitted, the current project context resolves to '{config.default_project}'."
+        if config.default_project
+        else "If omitted, project context is resolved from client roots or falls back to local memory."
+    )
     return [
-        types.Tool(
-            name="memory_search",
-            description=(
-                "Search memory for relevant information. "
-                f"Specify project_label for a project destination. {default_hint} "
-                "Falls back to local LightRAG with a warning if the project is unreachable."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "The search query."},
-                    "project_label": {
-                        "type": "string",
-                        "description": f"Project label. {default_hint}",
-                    },
-                },
-                "required": ["query"],
+        _tool(
+            "memory_search",
+            "Search memory using explicit label, registered project roots, or local fallback.",
+            {
+                "query": {"type": "string", "description": "The search query."},
+                "project_label": {"type": "string", "description": f"Optional explicit project label. {default_hint}"},
             },
+            required=["query"],
         ),
-        types.Tool(
-            name="memory_write",
-            description=(
-                "Write information to memory. "
-                f"Specify project_label for a project destination. {default_hint} "
-                "Write failures do NOT silently fall back to local."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "The text to store."},
-                    "project_label": {
-                        "type": "string",
-                        "description": f"Project label. {default_hint}",
-                    },
-                    "allow_local_fallback_for_write": {
-                        "type": "boolean",
-                        "description": (
-                            "Allow writing to local LightRAG if the project write fails. "
-                            "Default: false."
-                        ),
-                        "default": False,
-                    },
-                },
-                "required": ["text"],
-            },
-        ),
-        types.Tool(
-            name="memory_list_projects",
-            description="List all memory destinations (local + projects) from the client config.",
-            inputSchema={"type": "object", "properties": {}},
-        ),
-        types.Tool(
-            name="memory_health",
-            description="Check reachability of all memory destinations.",
-            inputSchema={"type": "object", "properties": {}},
-        ),
-        types.Tool(
-            name="memory_graph",
-            description="Get graph payload for a destination.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "project_label": {"type": "string"},
+        _tool(
+            "memory_write",
+            "Write memory using explicit label, registered project roots, or local fallback.",
+            {
+                "text": {"type": "string", "description": "The text to store."},
+                "project_label": {"type": "string", "description": f"Optional explicit project label. {default_hint}"},
+                "allow_local_fallback_for_write": {
+                    "type": "boolean",
+                    "description": "Allow writing to local memory if project write fails. Default false.",
+                    "default": False,
                 },
             },
+            required=["text"],
         ),
-        types.Tool(
-            name="memory_entities",
-            description="List entities from memory graph.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "project_label": {"type": "string"},
-                },
+        _tool("memory_list_projects", "List configured destinations and project contexts.", {}),
+        _tool("memory_current_context", "Show current roots and resolved project context.", {}),
+        _tool(
+            "memory_register_project",
+            "Register repo_root -> project_label and optionally write AGENTS.md/CLAUDE.md snippet.",
+            {
+                "repo_root": {"type": "string"},
+                "project_label": {"type": "string"},
+                "write_agents_md": {"type": "boolean", "default": False},
+                "write_claude_md": {"type": "boolean", "default": False},
             },
+            required=["repo_root", "project_label"],
         ),
-        types.Tool(
-            name="memory_relations",
-            description="List relations from memory graph.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "project_label": {"type": "string"},
-                },
-            },
+        _tool("memory_health", "Check reachability of all memory destinations.", {}),
+        _tool("memory_graph", "Get graph payload for the resolved destination.", {"project_label": {"type": "string"}}),
+        _tool("memory_entities", "List entities from memory graph.", {"project_label": {"type": "string"}}),
+        _tool("memory_relations", "List relations from memory graph.", {"project_label": {"type": "string"}}),
+        _tool("memory_documents", "List source documents in memory.", {"project_label": {"type": "string"}}),
+        _tool(
+            "memory_ingest_bulk",
+            "Ingest multiple records into the resolved destination.",
+            {"texts": {"type": "array", "items": {"type": "string"}}, "project_label": {"type": "string"}},
+            required=["texts"],
         ),
-        types.Tool(
-            name="memory_documents",
-            description="List source documents in memory.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "project_label": {"type": "string"},
-                },
-            },
-        ),
-        types.Tool(
-            name="memory_ingest_bulk",
-            description="Ingest multiple records to memory.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "texts": {"type": "array", "items": {"type": "string"}},
-                    "project_label": {"type": "string"},
-                },
-                "required": ["texts"],
-            },
-        ),
-        types.Tool(
-            name="memory_rebuild_index",
-            description="Trigger index/graph rebuild.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "project_label": {"type": "string"},
-                },
-            },
-        ),
+        _tool("memory_rebuild_index", "Trigger index or graph rebuild.", {"project_label": {"type": "string"}}),
     ]
 
-
-# ---------------------------------------------------------------------------
-# Tool handlers
-# ---------------------------------------------------------------------------
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict | None) -> list[types.Content]:
     args = arguments or {}
+    roots = await _current_roots()
+    started = time.perf_counter()
+    config = load_config()
 
     if name == "memory_search":
-        config = load_config()
         response = await Router(config).search(
             query=args.get("query", ""),
             project_label=args.get("project_label"),
+            roots=roots,
         )
-        return [types.TextContent(type="text", text=_dump(response.model_dump(exclude_none=True)))]
+        _audit_tool_call(name, response.model_dump(exclude_none=True), args, roots, started)
+        return [_text(response.model_dump(exclude_none=True))]
 
     if name == "memory_write":
-        config = load_config()
         response = await Router(config).write(
             text=args.get("text", ""),
             project_label=args.get("project_label"),
             allow_local_fallback=args.get("allow_local_fallback_for_write", False),
+            roots=roots,
         )
-        return [types.TextContent(type="text", text=_dump(response.model_dump(exclude_none=True)))]
+        _audit_tool_call(name, response.model_dump(exclude_none=True), args, roots, started)
+        return [_text(response.model_dump(exclude_none=True))]
 
     if name == "memory_list_projects":
-        config = load_config()
         local = find_local(config)
         payload = {
             "local": {"url": local.url, "enabled": local.enabled} if local else None,
             "projects": [
-                ProjectInfo(label=d.label, enabled=d.enabled).model_dump()
+                ProjectInfo(label=d.label or "", enabled=d.enabled).model_dump()
                 for d in config.destinations
-                if not d.is_local
+                if not d.is_local and d.label
             ],
+            "project_contexts": [context.model_dump() for context in config.project_contexts],
             "default_project": config.default_project,
         }
-        return [types.TextContent(type="text", text=_dump(payload))]
+        return [_text(payload)]
+
+    if name == "memory_current_context":
+        payload = {
+            "roots": roots,
+            "resolved": resolve_project_context(config, args.get("project_label"), roots=roots).model_dump(exclude_none=True),
+            "default_project": config.default_project,
+            "project_contexts": [context.model_dump() for context in config.project_contexts],
+        }
+        return [_text(payload)]
+
+    if name == "memory_register_project":
+        result = register_project(
+            config=config,
+            repo_root=args.get("repo_root", ""),
+            project_label=args.get("project_label", ""),
+            write_agents=args.get("write_agents_md", False),
+            write_claude=args.get("write_claude_md", False),
+        )
+        append_audit("memory_register_project", result)
+        return [_text({"status": "ok", **result})]
 
     if name == "memory_health":
-        config = load_config()
-        router = Router(config)
-        components: list[HealthStatus] = [
-            HealthStatus(name="client_gateway", status="ok")
-        ]
-
-        # Local LightRAG — native health check
-        local = find_local(config)
-        if local and local.enabled:
-            ok = await LightRAGClient(local.url).health()
-            components.append(HealthStatus(
-                name="local_lightrag",
-                status="ok" if ok else "error",
-                message=None if ok else f"LightRAG at {local.url} not responding.",
-            ))
-        else:
-            components.append(HealthStatus(name="local_lightrag", status="disabled"))
-
-        # Project destinations — health via Server Gateway
-        for dest in config.destinations:
-            if dest.is_local:
-                continue
-            if not dest.enabled:
-                components.append(HealthStatus(name=f"project:{dest.label}", status="disabled"))
-                continue
-            ok = await ServerGatewayClient(dest.url, dest.token or "").health()
-            components.append(HealthStatus(
-                name=f"project:{dest.label}",
-                status="ok" if ok else "error",
-            ))
-
-        overall = "ok" if all(c.status in ("ok", "disabled") for c in components) else "error"
-        response = HealthResponse(status=overall, components=components)
-        return [types.TextContent(type="text", text=_dump(response.model_dump(exclude_none=True)))]
+        payload = await _health_payload(config)
+        return [_text(payload.model_dump(exclude_none=True))]
 
     if name in {"memory_graph", "memory_entities", "memory_relations", "memory_documents", "memory_ingest_bulk", "memory_rebuild_index"}:
-        config = load_config()
-        label = args.get("project_label")
-        router = Router(config)
-        effective_label = label or config.default_project
-        if not effective_label:
-            local = find_local(config)
-            if not local:
-                raise ValueError("No local destination configured and no project_label provided.")
-            local_client = LightRAGClient(local.url)
-            data = await _call_extended_local(local_client, name, args)
-            return [types.TextContent(type="text", text=_dump({"status": "ok", "source": "local", "data": data}))]
-        dest = next((d for d in config.destinations if d.label == effective_label and d.enabled), None)
-        if not dest:
-            raise ValueError(f"Unknown project label: {effective_label}")
-        remote_client = ServerGatewayClient(dest.url, dest.token or "")
-        data = await _call_extended_remote(remote_client, name, args)
-        return [types.TextContent(type="text", text=_dump({"status": "ok", "source": "project", "data": data}))]
+        response = await _call_extended(name, args, config, roots)
+        _audit_tool_call(name, response, args, roots, started)
+        return [_text(response)]
 
     raise ValueError(f"Unknown tool: {name}")
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+def _tool(name: str, description: str, properties: dict, required: list[str] | None = None) -> types.Tool:
+    return types.Tool(
+        name=name,
+        description=description,
+        inputSchema={"type": "object", "properties": properties, "required": required or []},
+    )
+
+
+def _text(payload: object) -> types.TextContent:
+    return types.TextContent(type="text", text=_dump(payload))
+
 
 def _dump(obj: object) -> str:
     return json.dumps(obj, ensure_ascii=False, indent=2)
@@ -388,6 +254,69 @@ def _load_prompt_parts(section: str) -> list[str]:
     if not file_path.exists():
         return []
     return file_path.read_text(encoding="utf-8").splitlines()
+
+
+async def _current_roots() -> list[str]:
+    try:
+        result = await server.request_context.session.list_roots()
+    except Exception:
+        return []
+    uris = [str(root.uri) for root in result.roots]
+    return roots_from_uris(uris)
+
+
+async def _health_payload(config) -> HealthResponse:
+    components: list[HealthStatus] = [HealthStatus(name="client_gateway", status="ok")]
+    local = find_local(config)
+    if local and local.enabled:
+        ok = await LightRAGClient(local.url).health()
+        components.append(
+            HealthStatus(
+                name="local_lightrag",
+                status="ok" if ok else "error",
+                message=None if ok else f"LightRAG at {local.url} not responding.",
+                details={"url": local.url},
+            )
+        )
+    else:
+        components.append(HealthStatus(name="local_lightrag", status="disabled"))
+
+    for destination in config.destinations:
+        if destination.is_local:
+            continue
+        if not destination.enabled:
+            components.append(HealthStatus(name=f"project:{destination.label}", status="disabled"))
+            continue
+        ok = await ServerGatewayClient(destination.url, destination.token or "").health()
+        components.append(
+            HealthStatus(
+                name=f"project:{destination.label}",
+                status="ok" if ok else "error",
+                details={"url": destination.url},
+            )
+        )
+
+    overall = "ok" if all(item.status in {"ok", "disabled"} for item in components) else "error"
+    return HealthResponse(status=overall, components=components)
+
+
+async def _call_extended(name: str, args: dict, config, roots: list[str]) -> dict:
+    resolved = resolve_project_context(config, args.get("project_label"), roots=roots)
+    effective_label = resolved.resolved_project_label
+    if not effective_label:
+        local = find_local(config)
+        if not local:
+            raise ValueError("No local destination configured and no project_label resolved.")
+        client = LightRAGClient(local.url)
+        data = await _call_extended_local(client, name, args)
+        return {"status": "ok", "source": "local", "context": resolved.model_dump(exclude_none=True), "data": data}
+
+    destination = find_project(config, effective_label)
+    if not destination:
+        raise ValueError(f"Unknown project label: {effective_label}")
+    client = ServerGatewayClient(destination.url, destination.token or "")
+    data = await _call_extended_remote(client, name, args)
+    return {"status": "ok", "source": "project", "context": resolved.model_dump(exclude_none=True), "data": data}
 
 
 async def _call_extended_local(client: LightRAGClient, tool_name: str, args: dict) -> dict:
@@ -428,13 +357,27 @@ async def _call_extended_remote(client: ServerGatewayClient, tool_name: str, arg
     raise ValueError(f"Unsupported extended remote tool: {tool_name}")
 
 
+def _audit_tool_call(name: str, payload: dict, args: dict, roots: list[str], started: float) -> None:
+    context = payload.get("context") or {}
+    append_audit(
+        name,
+        {
+            "tool": name,
+            "requested_project_label": args.get("project_label"),
+            "resolved_project_label": context.get("resolved_project_label"),
+            "source": context.get("source"),
+            "roots": roots,
+            "status": payload.get("status"),
+            "warning": payload.get("warning"),
+            "error": payload.get("error"),
+            "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+        },
+    )
+
+
 async def main() -> None:
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options(),
-        )
+        await server.run(read_stream, write_stream, server.create_initialization_options())
 
 
 def main_sync() -> None:
