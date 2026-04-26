@@ -49,6 +49,32 @@ class HostHelper:
             return default
         return {**default, **loaded}
 
+    @staticmethod
+    def parse_compose_services(raw: bytes) -> list[dict[str, Any]]:
+        text = raw.decode("utf-8", errors="replace").strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            services: list[dict[str, Any]] = []
+            for line in text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(item, dict):
+                    services.append(item)
+            return services
+        if isinstance(parsed, list):
+            return [item for item in parsed if isinstance(item, dict)]
+        if isinstance(parsed, dict):
+            return [parsed]
+        return []
+
     def save_helper_config(self, payload: dict[str, Any]) -> None:
         write_json(self.config_path, payload)
 
@@ -64,10 +90,7 @@ class HostHelper:
         compose_ps = self.compose("ps", "--format", "json")
         services: list[dict[str, Any]] = []
         if compose_ps.returncode == 0:
-            try:
-                services = json.loads(compose_ps.stdout.decode("utf-8") or "[]")
-            except json.JSONDecodeError:
-                services = []
+            services = self.parse_compose_services(compose_ps.stdout)
         return {
             "status": "ok" if compose_ps.returncode == 0 else "error",
             "repo_root": str(self.repo_root),
