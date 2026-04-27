@@ -751,6 +751,152 @@ loadAll();
 </html>"""
 
 
+_ADMIN_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAGConnect Admin</title>
+<style>
+  :root { --bg:#0f1117; --surface:#181c26; --muted:#93a0b3; --text:#edf2f7; --border:#2a3344; --accent:#3b82f6; --ok:#10b981; --warn:#f59e0b; --err:#ef4444; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 "Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:16px 24px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:16px; }
+  main { max-width:1280px; margin:0 auto; padding:24px; display:grid; gap:16px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:16px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; min-width:0; }
+  h1,h2,p { margin:0; }
+  h1 { font-size:20px; }
+  h2 { font-size:15px; margin-bottom:6px; }
+  .muted { color:var(--muted); }
+  .section-note { color:var(--muted); margin-bottom:14px; }
+  .badge { display:inline-flex; align-items:center; max-width:100%; padding:2px 8px; border-radius:999px; font-size:12px; overflow-wrap:anywhere; word-break:break-word; }
+  .ok { background:rgba(16,185,129,.15); color:#86efac; }
+  .warn { background:rgba(245,158,11,.15); color:#fcd34d; }
+  .err { background:rgba(239,68,68,.15); color:#fca5a5; }
+  table { width:100%; border-collapse:collapse; table-layout:fixed; }
+  th,td { padding:8px 6px; border-bottom:1px solid rgba(255,255,255,.05); text-align:left; vertical-align:top; overflow-wrap:anywhere; word-break:break-word; }
+  input,select,textarea,button { width:100%; min-width:0; background:#0f172a; color:var(--text); border:1px solid var(--border); border-radius:10px; padding:10px 12px; }
+  button { cursor:pointer; background:var(--accent); border-color:var(--accent); font-weight:600; }
+  .row { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin-bottom:10px; align-items:start; }
+  .row-3 { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; margin-bottom:10px; align-items:start; }
+  .summary-list { display:grid; gap:10px; margin-bottom:14px; }
+  .summary-item { display:grid; gap:6px; min-width:0; }
+  .summary-label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  .inline-list { display:grid; gap:8px; margin:0; padding-left:18px; color:var(--muted); }
+  code { display:inline-flex; align-items:center; max-width:100%; background:#0b1220; border:1px solid rgba(255,255,255,.06); border-radius:10px; padding:8px; overflow-wrap:anywhere; word-break:break-word; white-space:pre-wrap; }
+  pre { background:#0b1220; border:1px solid rgba(255,255,255,.06); border-radius:10px; padding:12px; overflow:auto; white-space:pre-wrap; }
+  .status-line { margin-top:10px; color:var(--muted); font-size:12px; }
+  @media (max-width: 820px) {
+    .row, .row-3 { grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div><h1>RAGConnect Server Admin</h1><p class="muted">Tokens, runtime, model apply, helper, backups and logs.</p></div>
+  <div style="display:flex;gap:12px"><a href="/ui/graph" style="color:white">Graph</a><button style="width:auto" onclick="loadAll()">Refresh</button></div>
+</header>
+<main>
+  <div class="grid">
+    <section class="card"><h2>Health</h2><p class="section-note">Current status of the server gateway, LightRAG backend and host helper.</p><div id="health" class="muted">Loading...</div></section>
+    <section class="card"><h2>Runtime</h2><p class="section-note">Current effective model and provider configuration. Long values wrap below instead of collapsing into tags.</p><div id="runtime" class="muted">Loading...</div><div class="row"><input id="runtime-base" placeholder="OPENAI_API_BASE"><input id="runtime-model" placeholder="LLM_MODEL"></div><div class="row"><input id="runtime-key" placeholder="OPENAI_API_KEY (optional)"><button onclick="saveRuntime()">Save runtime</button></div></section>
+    <section class="card"><h2>Model Status</h2><p class="section-note">Validation and apply state for the currently configured model runtime.</p><div id="model-status" class="muted">Loading...</div><div class="row"><button onclick="validateModel()">Validate</button><button onclick="applyModel()">Apply and restart</button></div></section>
+  </div>
+  <div class="grid">
+    <section class="card"><h2>Helper and Backups</h2><p class="section-note">Host-side control plane status and the latest memory snapshots.</p><div id="helper" class="muted">Loading...</div><div class="row-3"><input id="backup-schedule" placeholder="schedule minutes"><input id="backup-retention" placeholder="retention count"><button onclick="saveHelperConfig()">Save helper config</button></div><div class="row"><button onclick="createBackup()">Create backup</button><input id="restore-artifact" placeholder="artifact.zip for restore"></div><div class="row"><button onclick="restoreBackup()">Restore backup</button><button onclick="pruneBackups()">Prune backups</button></div></section>
+    <section class="card"><h2>Tokens</h2><p class="section-note">Server access tokens for project memory clients.</p><div class="row-3"><select id="token-role"><option value="write">write</option><option value="readonly">readonly</option></select><input id="token-desc" placeholder="description"><button onclick="createToken()">Create token</button></div><div id="tokens" class="muted">Loading...</div></section>
+  </div>
+  <section class="card"><h2>Logs</h2><p class="section-note">Structured server-side audit, runtime and backup logs.</p><div class="row"><select id="log-name"><option value="audit">audit</option><option value="runtime">runtime</option><option value="security">security</option><option value="backup">backup</option><option value="apply">apply</option></select><button onclick="loadLogs()">Load logs</button></div><pre id="logs">No logs loaded.</pre></section>
+</main>
+<script>
+async function j(url, options) { const r = await fetch(url, options); const d = await r.json(); if (!r.ok) throw new Error(d.detail || d.error?.message || JSON.stringify(d)); return d; }
+function esc(v) { return String(v ?? '').replace(/[&<>"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s])); }
+function badge(ok, label) { const cls = ok === 'ok' || ok === 'applied_ok' ? 'ok' : ok === 'warning' || ok === 'saved_not_applied' || ok === 'apply_in_progress' ? 'warn' : 'err'; return `<span class="badge ${cls}">${esc(label || ok)}</span>`; }
+function summaryItem(label, value) { return `<div class="summary-item"><div class="summary-label">${esc(label)}</div><code>${esc(value)}</code></div>`; }
+async function loadAll() { await Promise.all([loadHealth(), loadRuntime(), loadModelStatus(), loadHelper(), loadTokens()]); await loadLogs(); }
+async function loadHealth() {
+  const data = await j('/admin/health-summary');
+  const h = data.health;
+  document.getElementById('health').innerHTML = `<div class="summary-list">${summaryItem('Server gateway', h.server_gateway || 'unknown')}${summaryItem('LightRAG', h.lightrag || 'unknown')}${summaryItem('Helper', h.helper_online ? 'online' : 'offline')}</div><div class="status-line">Gateway ${badge(h.server_gateway, h.server_gateway)} LightRAG ${badge(h.lightrag, h.lightrag)} Helper ${badge(h.helper_online ? 'ok':'warning', h.helper_online ? 'online':'offline')}</div>`;
+}
+async function loadRuntime() {
+  const data = await j('/admin/runtime-config');
+  document.getElementById('runtime-base').value = data.openai_api_base || '';
+  document.getElementById('runtime-model').value = data.llm_model || '';
+  document.getElementById('runtime-key').value = '';
+  document.getElementById('runtime').innerHTML = `<div class="summary-list">${summaryItem('OpenAI API base', data.openai_api_base || 'not set')}${summaryItem('LLM model', data.llm_model || 'not set')}${summaryItem('Embedding model', data.local_embedding_model || data.embedding_model || 'n/a')}${summaryItem('Embedding dim', data.local_embedding_dim || data.embedding_dim || 'n/a')}${summaryItem('API key', data.masked_openai_api_key || 'not set')}</div>`;
+}
+async function loadModelStatus() {
+  const data = await j('/admin/model/status');
+  const current = data.current_runtime;
+  const validation = data.last_validation || {};
+  const apply = data.last_apply || {};
+  const warning = validation.message ? `<div class="muted">${esc(validation.message)}</div>` : '';
+  document.getElementById('model-status').innerHTML = `<div class="summary-list">${summaryItem('Current model', current.llm_model || 'not set')}${summaryItem('Validation status', validation.status || 'unknown')}${summaryItem('Last apply status', apply.status || 'unknown')}</div><div class="status-line">Validation ${badge(validation.status || 'warning', validation.status || 'unknown')} Last apply ${badge(apply.status || 'warning', apply.status || 'unknown')}</div>${warning}`;
+}
+async function loadHelper() {
+  const status = await j('/admin/helper-status');
+  const backups = await j('/admin/backups');
+  document.getElementById('backup-schedule').value = backups.helper_config.backup_schedule_minutes || 0;
+  document.getElementById('backup-retention').value = backups.helper_config.backup_retention_count || 5;
+  const items = (backups.items || []).slice(0, 5).map(item => `<li>${esc(item.name)} (${Math.round((item.size_bytes || 0)/1024)} KiB)</li>`).join('');
+  document.getElementById('helper').innerHTML = `<div class="summary-list">${summaryItem('Helper state', status.helper_online ? 'online' : 'offline')}${summaryItem('Backup schedule minutes', backups.helper_config.backup_schedule_minutes || 0)}${summaryItem('Backup retention count', backups.helper_config.backup_retention_count || 5)}</div><div class="status-line">Helper ${badge(status.helper_online ? 'ok':'warning', status.helper_online ? 'online':'offline')}</div><ul class="inline-list">${items || '<li class="muted">No backups yet</li>'}</ul>`;
+}
+async function loadTokens() {
+  const data = await j('/admin/tokens');
+  const rows = (data.tokens || []).map(t => `<tr><td>${esc(t.token_id)}</td><td>${esc(t.role)}</td><td>${badge(t.enabled ? 'ok':'error', t.enabled ? 'enabled':'revoked')}</td><td>${esc(t.expires_at || '-')}</td></tr>`).join('');
+  document.getElementById('tokens').innerHTML = `<table><thead><tr><th>ID</th><th>Role</th><th>Status</th><th>Expires</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">No tokens</td></tr>'}</tbody></table>`;
+}
+async function loadLogs() {
+  const name = document.getElementById('log-name').value;
+  const data = await j('/admin/logs?name=' + encodeURIComponent(name) + '&limit=100');
+  document.getElementById('logs').textContent = JSON.stringify(data.items || data.lines || [], null, 2);
+}
+async function saveRuntime() {
+  await j('/admin/runtime-config', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ openai_api_base: document.getElementById('runtime-base').value, llm_model: document.getElementById('runtime-model').value, openai_api_key: document.getElementById('runtime-key').value }) });
+  await loadRuntime();
+}
+async function validateModel() {
+  const data = await j('/admin/model/validate', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ openai_api_base: document.getElementById('runtime-base').value, llm_model: document.getElementById('runtime-model').value, openai_api_key: document.getElementById('runtime-key').value }) });
+  alert(JSON.stringify(data, null, 2));
+  await loadModelStatus();
+}
+async function applyModel() {
+  const data = await j('/admin/model/apply', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ openai_api_base: document.getElementById('runtime-base').value, llm_model: document.getElementById('runtime-model').value, openai_api_key: document.getElementById('runtime-key').value }) });
+  alert(JSON.stringify(data, null, 2));
+  await loadModelStatus(); await loadHealth();
+}
+async function saveHelperConfig() {
+  await j('/admin/helper-config', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ backup_schedule_minutes: parseInt(document.getElementById('backup-schedule').value || '0', 10), backup_retention_count: parseInt(document.getElementById('backup-retention').value || '5', 10), backup_retention_days: 14 }) });
+  await loadHelper();
+}
+async function createBackup() {
+  const data = await j('/admin/backups', { method:'POST' });
+  alert(JSON.stringify(data, null, 2));
+  await loadHelper();
+}
+async function restoreBackup() {
+  const data = await j('/admin/backups/restore', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ artifact: document.getElementById('restore-artifact').value }) });
+  alert(JSON.stringify(data, null, 2));
+}
+async function pruneBackups() {
+  const data = await j('/admin/backups/prune', { method:'POST' });
+  alert(JSON.stringify(data, null, 2));
+  await loadHelper();
+}
+async function createToken() {
+  const data = await j('/admin/tokens', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ role: document.getElementById('token-role').value, description: document.getElementById('token-desc').value, expires_days: 90 }) });
+  alert('New token (shown once):\\n' + (data.token || ''));
+  document.getElementById('token-desc').value = '';
+  await loadTokens();
+}
+loadAll();
+</script>
+</body>
+</html>"""
+
+
 _GRAPH_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
