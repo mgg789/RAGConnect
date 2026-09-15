@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+import hashlib
 from typing import List
 
 import httpx
 
 from shared.models import ResultSource, SearchResult
 from shared.timeouts import get_request_timeout_seconds
+
+
+def _content_source(text: str) -> str:
+    """Content-addressed file_source for LightRAG >=1.5.
+
+    LightRAG treats file_source as a unique document identity and rejects
+    same-name inserts with HTTP 409. A content hash makes repeated writes of
+    the same text idempotent instead of colliding on a fixed name.
+    """
+    return f"mem-{hashlib.sha1(text.encode('utf-8')).hexdigest()[:16]}.txt"
 
 
 class LightRAGClient:
@@ -23,17 +34,22 @@ class LightRAGClient:
         await self._post_compatible(
             [
                 # LightRAG >=1.5 requires file_source; older versions ignore the extra field.
-                ("/documents/text", {"text": text, "file_source": "ragconnect.txt"}),
+                ("/documents/text", {"text": text, "file_source": _content_source(text)}),
                 ("/insert", {"text": text}),
-            ]
+            ],
+            duplicate_ok=True,
         )
 
     async def ingest(self, texts: list[str]) -> dict:
         return await self._post_compatible(
             [
-                ("/documents/texts", {"texts": texts, "file_sources": ["ragconnect.txt"] * len(texts)}),
+                (
+                    "/documents/texts",
+                    {"texts": texts, "file_sources": [_content_source(t) for t in texts]},
+                ),
                 ("/insert", {"texts": texts}),
-            ]
+            ],
+            duplicate_ok=True,
         )
 
     async def documents(self) -> dict:
@@ -89,14 +105,21 @@ class LightRAGClient:
             data = response.json()
             return data if isinstance(data, dict) else {"data": data}
 
-    async def _post_compatible(self, attempts: list[tuple[str, dict]]) -> dict:
+    async def _post_compatible(
+        self, attempts: list[tuple[str, dict]], duplicate_ok: bool = False
+    ) -> dict:
         last_exc: httpx.HTTPStatusError | None = None
         for index, (path, payload) in enumerate(attempts):
             try:
                 return await self._post(path, payload)
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
-                is_not_found = exc.response is not None and exc.response.status_code == 404
+                status_code = exc.response.status_code if exc.response is not None else None
+                if duplicate_ok and status_code == 409:
+                    # Content-addressed insert raced with an identical document
+                    # that LightRAG already stores: treat as success.
+                    return {"status": "ok", "message": "duplicate content already stored"}
+                is_not_found = status_code == 404
                 has_fallback = index < len(attempts) - 1
                 if is_not_found and has_fallback:
                     continue
