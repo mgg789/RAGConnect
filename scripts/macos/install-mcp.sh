@@ -5,6 +5,7 @@
 #   bash install-mcp.sh --target claude
 #   bash install-mcp.sh --target codex
 #   bash install-mcp.sh --target cursor
+#   bash install-mcp.sh --target zcode
 #   bash install-mcp.sh --target claude,cursor
 #   bash install-mcp.sh --repo-root /path/to/RAGConnect
 
@@ -104,7 +105,47 @@ PYEOF
 
 # ── Dispatch ───────────────────────────────────────────────────────────────────
 IFS=',' read -ra TARGETS <<< "$TARGET"
-[[ "${TARGETS[0]}" == "all" ]] && TARGETS=(claude codex cursor vscode)
+[[ "${TARGETS[0]}" == "all" ]] && TARGETS=(claude codex cursor zcode vscode)
+
+# ── ZCode: nested mcp.servers JSON config ──────────────────────────────────────
+install_zcode() {
+  local config_file="$HOME/.zcode/cli/config.json"
+  mkdir -p "$(dirname "$config_file")"
+  [[ -f "$config_file" ]] || echo '{}' > "$config_file"
+
+  "$PYTHON_EXE" - <<PYEOF
+import json
+
+config_path = """$config_file"""
+repo_root   = """$REPO_ROOT"""
+rag_home    = """$RAG_HOME"""
+python_exe  = """$PYTHON_EXE"""
+
+with open(config_path) as f:
+    cfg = json.load(f)
+
+cfg.setdefault('mcp', {})
+cfg['mcp'].setdefault('servers', {})
+cfg['mcp']['servers']['ragconnect'] = {
+    'command': python_exe,
+    'args': ['-m', 'client_gateway.mcp_server'],
+    'env': {
+        'PYTHONPATH': repo_root,
+        'RAGCONNECT_CONFIG_PATH': rag_home + '/client_config.yaml',
+        'RAGCONNECT_PROMPTS_DIR': repo_root + '/config/prompts',
+        'RAGCONNECT_HTTP_TIMEOUT_SECONDS': '600',
+        'MCP_TOOL_TIMEOUT': '600000',
+        'PYTHONUTF8': '1',
+        'PYTHONIOENCODING': 'utf-8',
+    }
+}
+
+with open(config_path, 'w') as f:
+    json.dump(cfg, f, indent=2)
+
+print(f'[RAGConnect] ZCode MCP → {config_path}')
+PYEOF
+}
 
 install_vscode() {
   local settings="$HOME/Library/Application Support/Code/User/settings.json"
@@ -162,6 +203,9 @@ for t in "${TARGETS[@]}"; do
     cursor)
       merge_json_config "$HOME/.cursor/mcp.json" "Cursor"
       ;;
+    zcode)
+      install_zcode
+      ;;
     codex)
       install_codex
       ;;
@@ -169,7 +213,7 @@ for t in "${TARGETS[@]}"; do
       install_vscode
       ;;
     *)
-      echo "[RAGConnect] WARNING: unknown target '$t'. Supported: claude, codex, cursor, vscode" ;;
+      echo "[RAGConnect] WARNING: unknown target '$t'. Supported: claude, codex, cursor, zcode, vscode" ;;
   esac
 done
 

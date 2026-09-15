@@ -6,7 +6,7 @@ RAGConnect gives your AI agents one shared memory layer so you can work more eff
 
 - local memory by default for personal long-term context, available to all AI agents on the same machine
 - project memory selected by `project_label`, shared across everyone working on that project and separated from local memory
-- MCP support for Codex, Claude Desktop, and other MCP-compatible apps
+- MCP support for Codex, Claude Desktop, Cursor, ZCode, and other MCP-compatible apps
 - optional server deployment for shared team memory
 - optional auto-start for local memory on Windows or macOS for a smoother workflow
 
@@ -38,6 +38,10 @@ This is the simplest and most convenient setup path. Recommended.
 - `scripts/windows/install-local-stack.ps1` — main bootstrap
 - `scripts/windows/install-codex-mcp.ps1` — MCP for Codex
 - `scripts/windows/install-claude-mcp.ps1` — MCP for Claude Desktop
+- `scripts/windows/install-cursor-mcp.ps1` — MCP for Cursor
+- `scripts/windows/install-zcode-mcp.ps1` — MCP for ZCode
+- `scripts/windows/install-vscode-mcp.ps1` — MCP for VS Code (GitHub Copilot Chat)
+- `scripts/windows/install-mcp.ps1` — unified installer for all clients (claude | codex | cursor | zcode | vscode)
 - `scripts/windows/install-autostart.ps1` — auto-start via the Startup folder
 - `scripts/windows/uninstall-autostart.ps1`
 - `scripts/windows/start-local-stack.ps1`
@@ -66,6 +70,8 @@ powershell -File scripts/windows/install-local-stack.ps1 `
 - `scripts/macos/install-local-stack.sh` — main bootstrap
 - `scripts/macos/install-codex-mcp.sh` — MCP for Codex
 - `scripts/macos/install-claude-mcp.sh` — MCP for Claude Desktop
+- `scripts/macos/install-zcode-mcp.sh` — MCP for ZCode
+- `scripts/macos/install-mcp.sh` — unified installer for all clients (claude | codex | cursor | zcode | vscode)
 - `scripts/macos/install-autostart.sh` — auto-start via LaunchAgent
 - `scripts/macos/uninstall-autostart.sh`
 - `scripts/macos/start-local-stack.sh`
@@ -139,6 +145,41 @@ Example block:
   }
 }
 ```
+
+## MCP setup for ZCode
+
+ZCode reads MCP servers from `~/.zcode/cli/config.json` and nests them under a top-level `mcp.servers` key
+(note: `mcp.servers`, not `mcpServers` as in Claude Desktop or Cursor).
+The scripts `install-zcode-mcp.ps1` and `install-zcode-mcp.sh` write this block automatically
+(and save the file as BOM-less UTF-8, which ZCode's strict JSON parser requires).
+
+Example block:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "ragconnect": {
+        "command": "C:/Users/<you>/.ragconnect/.venv/Scripts/python.exe",
+        "args": ["-m", "client_gateway.mcp_server"],
+        "env": {
+          "PYTHONPATH": "C:/path/to/RAGConnect",
+          "RAGCONNECT_CONFIG_PATH": "C:/Users/<you>/.ragconnect/client_config.yaml",
+          "RAGCONNECT_PROMPTS_DIR": "C:/path/to/RAGConnect/config/prompts",
+          "RAGCONNECT_HTTP_TIMEOUT_SECONDS": "600",
+          "MCP_TOOL_TIMEOUT": "600000",
+          "PYTHONUTF8": "1",
+          "PYTHONIOENCODING": "utf-8"
+        }
+      }
+    }
+  }
+}
+```
+
+ZCode also supports a workspace scope at `<repo>/.zcode/config.json` with the same `mcp.servers`
+layout — useful for sharing the connection inside one team repo, but keep per-user paths
+(`PYTHONPATH`, `RAGCONNECT_CONFIG_PATH`) in the user scope file.
 
 ## Auto-start for local memory
 

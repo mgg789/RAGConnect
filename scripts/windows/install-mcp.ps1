@@ -5,12 +5,13 @@
 #   install-mcp.ps1 -Target claude
 #   install-mcp.ps1 -Target codex
 #   install-mcp.ps1 -Target cursor
+#   install-mcp.ps1 -Target zcode
 #   install-mcp.ps1 -Target claude,cursor
 
 param(
     [string]$RepoRoot   = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
     [string]$PythonPath = (Join-Path $env:USERPROFILE '.ragconnect\.venv\Scripts\python.exe'),
-    [string[]]$Target   = @('all')   # claude | codex | cursor | vscode | all (comma-separated)
+    [string[]]$Target   = @('all')   # claude | codex | cursor | zcode | vscode | all (comma-separated)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,7 +19,7 @@ $RepoRoot = (Resolve-Path $RepoRoot).Path
 
 $requestedTargets = @($Target) -join ','
 $targets = if ($requestedTargets.Trim().ToLower() -eq 'all') {
-    @('claude','codex','cursor','vscode')
+    @('claude','codex','cursor','zcode','vscode')
 } else {
     $requestedTargets -split ',' | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ }
 }
@@ -54,6 +55,26 @@ function Install-JsonClient([string]$Name, [string]$ConfigPath) {
     $json.mcpServers | Add-Member -Force -NotePropertyName ragconnect -NotePropertyValue (Make-ServerConfig)
     $json | ConvertTo-Json -Depth 10 | Set-Content -Path $ConfigPath -Encoding utf8
     Write-Host "[RAGConnect] $Name MCP -> $ConfigPath"
+}
+
+# JSON-based client with nested mcp.servers layout (ZCode)
+function Install-ZcodeClient([string]$ConfigPath) {
+    $ConfigDir = Split-Path $ConfigPath -Parent
+    New-Item -ItemType Directory -Force $ConfigDir | Out-Null
+    $json = if (Test-Path $ConfigPath) {
+        Get-Content $ConfigPath -Raw | ConvertFrom-Json
+    } else { [pscustomobject]@{} }
+    if (-not $json.mcp) {
+        $json | Add-Member -NotePropertyName mcp -NotePropertyValue ([pscustomobject]@{})
+    }
+    if (-not $json.mcp.servers) {
+        $json.mcp | Add-Member -NotePropertyName servers -NotePropertyValue ([pscustomobject]@{})
+    }
+    $json.mcp.servers | Add-Member -Force -NotePropertyName ragconnect -NotePropertyValue (Make-ServerConfig)
+    # BOM-less UTF-8: ZCode reads this file with a strict JSON parser.
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText($ConfigPath, ($json | ConvertTo-Json -Depth 10), $utf8NoBom)
+    Write-Host "[RAGConnect] ZCode MCP -> $ConfigPath"
 }
 
 # TOML-based clients (Codex)
@@ -97,6 +118,9 @@ foreach ($t in $targets) {
         'cursor' {
             Install-JsonClient 'Cursor' (Join-Path $env:USERPROFILE '.cursor\mcp.json')
         }
+        'zcode' {
+            Install-ZcodeClient (Join-Path $env:USERPROFILE '.zcode\cli\config.json')
+        }
         'codex' {
             Install-CodexClient (Join-Path $env:USERPROFILE '.codex\config.toml')
         }
@@ -123,7 +147,7 @@ foreach ($t in $targets) {
             }
         }
         default {
-            Write-Warning ("Unknown target {0}. Supported: claude, codex, cursor, vscode" -f $t)
+            Write-Warning ("Unknown target {0}. Supported: claude, codex, cursor, zcode, vscode" -f $t)
         }
     }
 }
