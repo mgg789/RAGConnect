@@ -22,7 +22,8 @@ class LightRAGClient:
     async def write(self, text: str) -> None:
         await self._post_compatible(
             [
-                ("/documents/text", {"text": text}),
+                # LightRAG >=1.5 requires file_source; older versions ignore the extra field.
+                ("/documents/text", {"text": text, "file_source": "ragconnect.txt"}),
                 ("/insert", {"text": text}),
             ]
         )
@@ -30,7 +31,7 @@ class LightRAGClient:
     async def ingest(self, texts: list[str]) -> dict:
         return await self._post_compatible(
             [
-                ("/documents/texts", {"texts": texts}),
+                ("/documents/texts", {"texts": texts, "file_sources": ["ragconnect.txt"] * len(texts)}),
                 ("/insert", {"texts": texts}),
             ]
         )
