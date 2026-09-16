@@ -63,9 +63,10 @@ class LightRAGClient:
 
     async def graph(self) -> dict:
         # LightRAG ≥1.x: /graphs?label=*  returns the full graph across all labels.
-        # Fallback: legacy /graph endpoint for older installs.
+        # max_nodes must match the server's MAX_GRAPH_NODES ceiling (default 1000);
+        # LCT deployments run 5000. Fallback: legacy /graph endpoint for older installs.
         try:
-            data = await self._get("/graphs?label=*&max_depth=3&max_nodes=1000")
+            data = await self._get("/graphs?label=*&max_depth=3&max_nodes=5000")
             nodes = data.get("nodes", [])
             edges = data.get("edges", [])
             if nodes:
